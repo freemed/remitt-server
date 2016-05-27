@@ -1,0 +1,15 @@
+debug: false
+port: 3000
+database:
+  name: remitt
+  user: remitt
+  pass: remitt
+  host: tcp(127.0.0.1:3306)
+paths:
+  base: .
+  db-migrations: migrations
+  xsltproc: /usr/bin/xsltproc
+  ssh: /usr/bin/ssh
+timing-iterations:
+  worker-threads: 4
+internal-xslt: false

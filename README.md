@@ -24,6 +24,8 @@ Uses:
 
 Code in this repository can be run against a valid REMITT 0.5.x series database with no modifications.
 
+Full list of tasks for complete migration : [TODO](TODO.md)
+
 ## Architectural changes from REMITT 0.5.x
 
  * TODO

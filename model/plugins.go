@@ -24,4 +24,3 @@ func GetPluginsForCategory(category string) ([]PluginsModel, error) {
 	_, err := DbMap.Select(&o, "SELECT * FROM "+TABLE_PLUGINS+" WHERE category = ?", category)
 	return o, err
 }
-

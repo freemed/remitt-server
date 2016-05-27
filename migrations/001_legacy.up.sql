@@ -71,7 +71,6 @@ INSERT INTO `tUserConfig` VALUES
 
 DROP PROCEDURE IF EXISTS p_UserConfigUpdate;
 
-DELIMITER //
 CREATE PROCEDURE p_UserConfigUpdate (
 	  IN c_user VARCHAR(100)
 	, IN c_namespace VARCHAR(100)
@@ -107,8 +106,7 @@ BEGIN
 				, c_value
 			);
 	END IF;
-END//
-DELIMITER ;
+END;
 
 DROP TABLE IF EXISTS `tPayload`;
 CREATE TABLE `tPayload` (
@@ -149,7 +147,6 @@ CREATE TABLE `tProcessor` (
 
 DROP PROCEDURE IF EXISTS p_GetStatus;
 
-DELIMITER //
 CREATE PROCEDURE p_GetStatus (
 	  IN username VARCHAR( 100 )
 	, IN jobId INT UNSIGNED
@@ -198,9 +195,7 @@ BEGIN
 			SELECT 0 AS 'status', c AS 'stage';		
 		END IF;
 	END IF;
-END//
-
-DELIMITER ;
+END;
 
 ### Plugin Lookup ###
 
@@ -278,8 +273,6 @@ INSERT INTO `tPluginOptionTransform` VALUES
 DROP FUNCTION IF EXISTS renderPluginOutputFormat;
 DROP FUNCTION IF EXISTS transportPluginInputFormat;
 
-DELIMITER //
-
 CREATE FUNCTION renderPluginOutputFormat (
 		  pluginClass VARCHAR (100)
 		, pluginOption VARCHAR (100)
@@ -295,7 +288,7 @@ BEGIN
 	END IF;
 
 	RETURN ret;
-END//
+END;
 
 CREATE FUNCTION transportPluginInputFormat (
 		  pluginClass VARCHAR (100)
@@ -312,9 +305,7 @@ BEGIN
 	END IF;
 
 	RETURN ret;
-END//
-
-DELIMITER ;
+END;
 
 ### Translation Lookup ###
 
@@ -333,8 +324,6 @@ INSERT INTO `tTranslation` VALUES
 
 DROP PROCEDURE IF EXISTS p_ResolveTranslationPlugin;
 
-DELIMITER //
-
 CREATE PROCEDURE p_ResolveTranslationPlugin (
 		  renderPlugin VARCHAR (100)
 		, renderOption VARCHAR (100)
@@ -346,9 +335,7 @@ BEGIN
 		inputFormat = renderPluginOutputFormat( renderPlugin, renderOption )
 		AND FIND_IN_SET( outputFormat, transportPluginInputFormat( transportPlugin, transportOption ) )
 		LIMIT 1;
-END//
-
-DELIMITER ;
+END;
 
 ### Job Scheduler ###
 

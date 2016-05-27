@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/base64"
 	"github.com/gin-gonic/gin"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -20,7 +21,9 @@ func BasicAuth(afunc func(string, string) bool, realm string) gin.HandlerFunc {
 		auth := strings.SplitN(c.Request.Header.Get("Authorization"), " ", 2)
 
 		if len(auth) != 2 || auth[0] != "Basic" {
-			c.AbortWithStatus(http.StatusBadRequest)
+			log.Printf("BasicAuth(): found %v", auth)
+			c.Header("WWW-Authenticate", realm)
+			c.AbortWithStatus(http.StatusUnauthorized)
 			return
 		}
 
@@ -28,11 +31,13 @@ func BasicAuth(afunc func(string, string) bool, realm string) gin.HandlerFunc {
 		pair := strings.SplitN(string(payload), ":", 2)
 		if !afunc(pair[0], pair[1]) {
 			// Credentials doesn't match, we return 401 and abort handlers chain.
+			log.Printf("BasicAuth(): Credentials for %s do not match", pair[0])
 			c.Header("WWW-Authenticate", realm)
 			c.AbortWithStatus(401)
 		} else {
 			// The user credentials was found, set user's id to key AuthUserKey in this context, the userId can be read later using
 			// c.MustGet(gin.AuthUserKey)
+			log.Printf("BasicAuth() [%s]: Authenticated user", pair[0])
 			c.Set(gin.AuthUserKey, pair[0])
 		}
 	}

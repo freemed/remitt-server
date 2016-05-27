@@ -5,7 +5,10 @@ import (
 )
 
 const (
-	TABLE_PAYLOAD = "tPayload"
+	TABLE_PAYLOAD         = "tPayload"
+	PayloadStateValid     = "valid"
+	PayloadStateFailed    = "failed"
+	PayloadStateCompleted = "completed"
 )
 
 type PayloadModel struct {

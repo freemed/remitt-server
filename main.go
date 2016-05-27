@@ -16,7 +16,7 @@ import (
 )
 
 var (
-	ConfigFile = flag.String("config-file", "./deployer.yml", "Deployer configuration file")
+	ConfigFile = flag.String("config-file", "./remitt.yml", "Configuration file")
 	Debug      = flag.Bool("debug", false, "Enable debugging (overrides config)")
 )
 
@@ -44,6 +44,7 @@ func main() {
 	m := gin.New()
 	m.Use(gin.Logger())
 	m.Use(gin.Recovery())
+	m.Use(BasicAuth(model.BasicAuthCallback, "REMITT"))
 
 	// Enable gzip compression
 	m.Use(gzip.Gzip(gzip.DefaultCompression))
@@ -57,8 +58,7 @@ func main() {
 		c.Redirect(http.StatusMovedPermanently, "./ui/index.html")
 	})
 
-	// All authorized pieces live in /api
-	a := m.Group("/api", BasicAuth(model.BasicAuthCallback, "REMITT"))
+	a := m.Group("/api")
 
 	// Iterate through initializing API maps
 	for k, v := range common.ApiMap {

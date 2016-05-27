@@ -7,10 +7,10 @@ const (
 )
 
 type UserConfigModel struct {
-	User      string `db:"user"`
-	Namespace string `db:"cNamespace"`
-	Option    string `db:"cOption"`
-	Value     []byte `db:"cValue"`
+	User      string `db:"user" json:"user"`
+	Namespace string `db:"cNamespace" json:"namespace"`
+	Option    string `db:"cOption" json:"option"`
+	Value     string `db:"cValue" json:"value"`
 }
 
 func init() {

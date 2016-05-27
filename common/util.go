@@ -3,10 +3,12 @@ package common
 import (
 	"crypto/md5"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"io/ioutil"
 	"log"
+	"strconv"
 	"time"
 )
 
@@ -39,4 +41,21 @@ func JsonEncode(o interface{}) []byte {
 func BodyFromContext(c *gin.Context) ([]byte, error) {
 	defer c.Request.Body.Close()
 	return ioutil.ReadAll(c.Request.Body)
+}
+
+func ParamInt(c *gin.Context, param string) (int64, error) {
+	p := c.Param(param)
+	if p == "" {
+		return int64(0), errors.New("bad parameter")
+	}
+	return strconv.ParseInt(p, 10, 64)
+}
+
+func ParamMustInt(c *gin.Context, param string) int64 {
+	p := c.Param(param)
+	if p == "" {
+		return int64(0)
+	}
+	i, _ := strconv.ParseInt(p, 10, 64)
+	return i
 }

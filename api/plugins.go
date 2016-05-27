@@ -20,16 +20,16 @@ func PluginsGetAll(c *gin.Context) {
 	cat := c.Param("category")
 
 	switch cat {
-		case "validation":
-		case "render":
-		case "translation":
-		case "transport":
-		case "eligibility":
-		case "scooper":
-		default:
-			log.Printf("PluginsGetAll() [%s]: Could not find plugins for category %s", user, cat)
-			c.AbortWithStatus(http.StatusBadRequest)
-			return
+	case "validation":
+	case "render":
+	case "translation":
+	case "transport":
+	case "eligibility":
+	case "scooper":
+	default:
+		log.Printf("PluginsGetAll() [%s]: Could not find plugins for category %s", user, cat)
+		c.AbortWithStatus(http.StatusBadRequest)
+		return
 	}
 
 	o, err := model.GetPluginsForCategory(cat)
@@ -40,4 +40,3 @@ func PluginsGetAll(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, o)
 }
-
