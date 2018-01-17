@@ -386,7 +386,7 @@
 		<x12segment sid="SE">
 			<comment>SE - Transaction Set Trailer</comment>
 			<element>
-				<segmentcount />
+				<segmentcount>*</segmentcount>
 			</element>
 			<element>
 				<!-- <content>0021</content> -->
