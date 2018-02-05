@@ -2,11 +2,12 @@ package main
 
 import (
 	"encoding/base64"
-	"github.com/gin-gonic/gin"
 	"log"
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/gin-gonic/gin"
 )
 
 // BasicAuth is a variation of the gin.BasicAuth middleware allowing for a

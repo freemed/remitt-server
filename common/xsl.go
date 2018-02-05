@@ -1,12 +1,13 @@
 package common
 
 import (
-	"github.com/ThomsonReutersEikon/gokogiri/xml"
-	"github.com/freemed/remitt-server/config"
-	"github.com/jbowtie/ratago/xslt"
 	"io/ioutil"
 	"log"
 	"strings"
+
+	"github.com/freemed/remitt-server/config"
+	"github.com/jbowtie/gokogiri/xml"
+	"github.com/jbowtie/ratago/xslt"
 )
 
 // XslTransform uses the ratago native Go XSL implementation to perform XSL

@@ -11,5 +11,5 @@ paths:
   xsltproc: /usr/bin/xsltproc
   ssh: /usr/bin/ssh
 timing-iterations:
-  worker-threads: 4
+  worker-threads: 16
 internal-xslt: false
