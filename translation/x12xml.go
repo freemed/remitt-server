@@ -1,6 +1,7 @@
 package translation
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/freemed/remitt-server/model"
@@ -12,18 +13,24 @@ type TranslateX12Xml struct {
 	Counters  map[string]int
 }
 
-func (self *TranslateX12Xml) Translate(source model.X12Xml) (out string, err error) {
+func (self *TranslateX12Xml) Translate(source interface{}) (out []byte, err error) {
+	src, ok := source.(model.X12Xml)
+	if !ok {
+		err = errors.New("invalid datatype presented")
+	}
+
 	self.Hl = map[string]int{}
 	self.Counters = map[string]int{}
 	self.HlCounter = 0
-	out = ""
-	for iter := range source.Segments {
-		r, err := self.RenderSegment(source, source.Segments[iter], iter)
+	outString := ""
+	for iter := range src.Segments {
+		r, err := self.RenderSegment(src, src.Segments[iter], iter)
 		if err != nil {
 			return out, err
 		}
-		out += r
+		outString += r
 	}
+	out = []byte(outString)
 	return
 }
 

@@ -2,9 +2,11 @@ package translation
 
 import (
 	"bytes"
+	"errors"
 	//"fmt"
 	"log"
 	"os"
+	"time"
 
 	"github.com/freemed/remitt-server/model"
 	"github.com/orcaman/writerseeker"
@@ -15,20 +17,35 @@ import (
 
 type TranslateFixedFormPDF struct {
 	TemplatePath string
-	Debug bool
+	Debug        bool
+	Benchmark    bool
 }
 
-func (self *TranslateFixedFormPDF) Translate(source model.FixedFormXml) (out []byte, err error) {
+func (self *TranslateFixedFormPDF) Translate(source interface{}) (out []byte, err error) {
+	st := time.Now()
+
 	if self.Debug {
 		log.Printf("Translate()")
 	}
 
+	src, ok := source.(model.FixedFormXml)
+	if !ok {
+		err = errors.New("invalid datatype presented")
+	}
+
+	if self.Benchmark {
+		log.Printf("Conversion : %s", time.Now().Sub(st).String())
+	}
+
 	// Create new PDF factory with unidoc
 	c := creator.New()
-	for iter, _ := range source.Pages {
-		err = self.RenderPage(c, source.Pages[iter])
+	for iter, _ := range src.Pages {
+		err = self.RenderPage(c, src.Pages[iter])
 		if err != nil {
 			return
+		}
+		if self.Benchmark {
+			log.Printf("Page %d : %s", iter+1, time.Now().Sub(st).String())
 		}
 	}
 	writerSeeker := &writerseeker.WriterSeeker{}
@@ -82,6 +99,8 @@ func (self *TranslateFixedFormPDF) RenderPage(c *creator.Creator, pageObj model.
 }
 
 func (self *TranslateFixedFormPDF) RenderElement(c *creator.Creator, pageObj model.FixedFormPage, element model.FixedElement) (err error) {
+	st := time.Now()
+
 	if self.Debug {
 		log.Printf("RenderElement(%#v)", element)
 	}
@@ -97,6 +116,9 @@ func (self *TranslateFixedFormPDF) RenderElement(c *creator.Creator, pageObj mod
 	// TODO: FIXME: pad or cut if necessary
 
 	p := creator.NewParagraph(content)
+	if self.Benchmark {
+		log.Printf("-- RenderElement(): NewParagraph: %s", time.Now().Sub(st).String())
+	}
 
 	// Column / X
 	xPos := float64((float64(element.Column) * pageObj.Format.Pdf.Scaling.Horizontal) + pageObj.Format.Pdf.Offset.Horizontal)
@@ -107,8 +129,14 @@ func (self *TranslateFixedFormPDF) RenderElement(c *creator.Creator, pageObj mod
 	p.SetFontSize(pageObj.Format.Pdf.Font.Size)
 	p.SetPos(xPos, yPos)
 
+	if self.Benchmark {
+		log.Printf("-- RenderElement(): SetFont/Pos: %s", time.Now().Sub(st).String())
+	}
 	// Push to current page
 	err = c.Draw(p)
+	if self.Benchmark {
+		log.Printf("-- RenderElement(): Draw: %s", time.Now().Sub(st).String())
+	}
 	return err
 }
 

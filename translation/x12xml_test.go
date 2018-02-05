@@ -2,7 +2,6 @@ package translation
 
 import (
 	"encoding/xml"
-	"fmt"
 	"io/ioutil"
 	"testing"
 
@@ -26,5 +25,5 @@ func Test_TranslateX12Xml(t *testing.T) {
 	if err != nil {
 		t.Fatalf(err.Error())
 	}
-	fmt.Println(out)
+	ioutil.WriteFile("../test/out.x12", out, 0600)
 }

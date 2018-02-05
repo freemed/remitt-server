@@ -21,7 +21,7 @@ func Test_TranslateFixedFormXmlPDF(t *testing.T) {
 		t.Fatalf(err.Error())
 	}
 
-	translator := &TranslateFixedFormPDF{TemplatePath:"../resources/pdf",Debug:true}
+	translator := &TranslateFixedFormPDF{TemplatePath: "../resources/pdf", Benchmark: true}
 	out, err := translator.Translate(obj)
 	if err != nil {
 		t.Fatalf(err.Error())
