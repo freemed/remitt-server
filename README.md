@@ -13,13 +13,11 @@ Uses:
  * [Gin](https://github.com/gin-gonic/gin/): Web framework for Go
  * [GORP](http://github.com/go-gorp/gorp): Db access layer
  * [Go-MySQL-Driver](http://github.com/go-sql-driver/mysql): MySQL driver
- * [go-redis](https://github.com/go-redis/redis): Redis driver
  * [jQuery](https://jquery.com): Fast Javascript framework
  * [Bootstrap](http://getbootstrap.com): Responsive framework
  * [Bootstrap-Switch](http://www.bootstrap-switch.org): Switches for Bootstrap
- * [Knockout](http://knockoutjs.com/): MVVM UI toolkit
- * [Knockout.Mapping](https://github.com/SteveSanderson/knockout.mapping): Automatic JS object mapping for Knockout
  * [toastr](https://github.com/CodeSeven/toastr): Toaster widget
+ * [ratago](https://github.com/jbowtie/ratago): Native XSLT support
  * [manners](https://github.com/braintree/manners): Graceful http/https serving
 
 Code in this repository can be run against a valid REMITT 0.5.x series database with no modifications.
