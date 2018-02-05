@@ -2,14 +2,14 @@ package model
 
 import (
 	"database/sql"
-	"errors"
+	"log"
+	"os"
+
 	"github.com/freemed/remitt-server/config"
 	"github.com/go-gorp/gorp"
 	_ "github.com/go-sql-driver/mysql"
-	_ "github.com/jbuchbinder/migrate/driver/mysql"
-	"github.com/jbuchbinder/migrate/migrate"
-	"log"
-	"os"
+	"github.com/mattes/migrate"
+	"github.com/mattes/migrate/database/mysql"
 )
 
 var (
@@ -30,7 +30,7 @@ func InitDb() *gorp.DbMap {
 	}
 
 	// Execute migrations
-	MigrateDb()
+	MigrateDb(dbobj)
 
 	dbmap := &gorp.DbMap{
 		Db:      dbobj,
@@ -58,17 +58,21 @@ func InitDb() *gorp.DbMap {
 	return dbmap
 }
 
-func MigrateDb() error {
-	dbUrl := "mysql://" + config.Config.Database.User + ":" + config.Config.Database.Pass + "@" + config.Config.Database.Host + "/" + config.Config.Database.Name + "?" + DbFlags
+func MigrateDb(dbobj *sql.DB) error {
 	migrationsPath := config.Config.Paths.BasePath + string(os.PathSeparator) + config.Config.Paths.DbMigrationsPath
-	log.Printf("MigrateDb(): Using dbUrl: %s", dbUrl)
 	log.Printf("MigrateDb(): Using migrationsPath: %s", migrationsPath)
-	e, ok := migrate.UpSync(dbUrl, migrationsPath)
-	if !ok {
-		for _, x := range e {
-			log.Print(x.Error())
-		}
-		return errors.New("Error executing db migrations")
+	driver, err := mysql.WithInstance(dbobj, &mysql.Config{})
+	if err != nil {
+		return err
 	}
-	return nil
+	m, err := migrate.NewWithDatabaseInstance(
+		"file://"+migrationsPath,
+		"mysql",
+		driver,
+	)
+	if err != nil {
+		return err
+	}
+	err = m.Steps(2)
+	return err
 }

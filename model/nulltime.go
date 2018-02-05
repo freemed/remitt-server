@@ -43,3 +43,7 @@ func (nt *NullTime) UnmarshalJSON(data []byte) (err error) {
 	*nt = NullTime{t, err == nil}
 	return
 }
+
+func NullTimeNow() NullTime {
+	return NullTime{time.Now(), true}
+}
