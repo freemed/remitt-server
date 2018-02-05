@@ -3,30 +3,37 @@ package translation
 import (
 	"bytes"
 	//"fmt"
+	"log"
 	"os"
 
-	"github.com/orcaman/writerseeker"
 	"github.com/freemed/remitt-server/model"
+	"github.com/orcaman/writerseeker"
 	"github.com/unidoc/unidoc/pdf/creator"
 	pdf "github.com/unidoc/unidoc/pdf/model"
 	"github.com/unidoc/unidoc/pdf/model/fonts"
 )
 
 type TranslateFixedFormPDF struct {
+	TemplatePath string
+	Debug bool
 }
 
 func (self *TranslateFixedFormPDF) Translate(source model.FixedFormXml) (out []byte, err error) {
+	if self.Debug {
+		log.Printf("Translate()")
+	}
+
 	// Create new PDF factory with unidoc
 	c := creator.New()
 	for iter, _ := range source.Pages {
 		err = self.RenderPage(c, source.Pages[iter])
 		if err != nil {
-			return 
+			return
 		}
 	}
 	writerSeeker := &writerseeker.WriterSeeker{}
 	err = c.Write(writerSeeker)
-	if err != nil {
+	if err == nil {
 		reader := writerSeeker.Reader()
 		buf := new(bytes.Buffer)
 		buf.ReadFrom(reader)
@@ -36,8 +43,11 @@ func (self *TranslateFixedFormPDF) Translate(source model.FixedFormXml) (out []b
 }
 
 func (self *TranslateFixedFormPDF) RenderPage(c *creator.Creator, pageObj model.FixedFormPage) (err error) {
+	if self.Debug {
+		log.Printf("RenderPage()")
+	}
 	if pageObj.Format.Pdf.Template != "" {
-		f, err := os.Open(pageObj.Format.Pdf.Template)
+		f, err := os.Open(self.TemplatePath + string(os.PathSeparator) + pageObj.Format.Pdf.Template + ".pdf")
 		if err != nil {
 			return err
 		}
@@ -48,7 +58,7 @@ func (self *TranslateFixedFormPDF) RenderPage(c *creator.Creator, pageObj model.
 			return err
 		}
 
-		templatePage, err := pdfReader.GetPage(pageObj.Format.Pdf.Page + 1)
+		templatePage, err := pdfReader.GetPage(pageObj.Format.Pdf.Page)
 		if err != nil {
 			return err
 		}
@@ -72,6 +82,10 @@ func (self *TranslateFixedFormPDF) RenderPage(c *creator.Creator, pageObj model.
 }
 
 func (self *TranslateFixedFormPDF) RenderElement(c *creator.Creator, pageObj model.FixedFormPage, element model.FixedElement) (err error) {
+	if self.Debug {
+		log.Printf("RenderElement(%#v)", element)
+	}
+
 	content := element.Content
 	if element.OmitPdf {
 		return nil

@@ -21,11 +21,11 @@ type FixedFormPage struct {
 			} `xml:"font"`
 			Scaling struct {
 				Vertical   float64 `xml:"vertical,attr"`
-				Horizontal float64 `xml:"vertical,attr"`
+				Horizontal float64 `xml:"horizontal,attr"`
 			} `xml:"scaling"`
 			Offset struct {
 				Vertical   float64 `xml:"vertical,attr"`
-				Horizontal float64 `xml:"vertical,attr"`
+				Horizontal float64 `xml:"horizontal,attr"`
 			} `xml:"offset"`
 		} `xml:"pdf"`
 	} `xml:"format"`
@@ -38,5 +38,5 @@ type FixedElement struct {
 	Row            int    `xml:"row"`
 	Column         int    `xml:"column"`
 	Length         int    `xml:"length"`
-	Content        string `xml:",innerxml"`
+	Content        string `xml:"content"`
 }
