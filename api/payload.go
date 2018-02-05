@@ -16,19 +16,32 @@ func init() {
 	}
 }
 
+type inputPayload struct {
+	OriginalId      model.NullString `json:"original_id"`
+	InputPayload    string           `json:"input_payload"`
+	RenderPlugin    string           `json:"render_plugin"`
+	RenderOption    string           `json:"render_option"`
+	TransportPlugin string           `json:"transport_plugin"`
+	TransportOption string           `json:"transport_option"`
+}
+
 func PayloadInsert(c *gin.Context) {
 	user := c.MustGet(gin.AuthUserKey).(string)
 
-	// TODO: FIXME: GET DATA
-	payload := []byte{}
+	var raw inputPayload
+	if c.BindJSON(&raw) != nil {
+		c.AbortWithStatus(http.StatusBadRequest)
+		return
+	}
 
 	obj := model.PayloadModel{
 		User:            user,
-		Payload:         payload,
-		RenderPlugin:    "",
-		RenderOption:    "",
-		TransportPlugin: "",
-		TransportOption: "",
+		Payload:         []byte(raw.InputPayload),
+		RenderPlugin:    raw.RenderPlugin,
+		RenderOption:    raw.RenderOption,
+		TransportPlugin: raw.TransportPlugin,
+		TransportOption: raw.TransportOption,
+		OriginalId:      raw.OriginalId,
 	}
 
 	err := model.DbMap.Insert(&obj)
