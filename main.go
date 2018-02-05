@@ -3,16 +3,18 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log"
+	"net/http"
+	"strings"
+
 	"github.com/braintree/manners"
 	_ "github.com/freemed/remitt-server/api"
 	"github.com/freemed/remitt-server/common"
 	"github.com/freemed/remitt-server/config"
+	"github.com/freemed/remitt-server/jobqueue"
 	"github.com/freemed/remitt-server/model"
 	"github.com/gin-gonic/contrib/gzip"
 	"github.com/gin-gonic/gin"
-	"log"
-	"net/http"
-	"strings"
 )
 
 var (
@@ -35,10 +37,15 @@ func main() {
 	if *Debug {
 		log.Print("Overriding existing debug configuration")
 		config.Config.Debug = true
+	} else {
+		gin.SetMode(gin.ReleaseMode)
 	}
 
 	log.Print("Initializing database backend")
 	model.DbMap = model.InitDb()
+
+	log.Printf("Initializing worker threads")
+	jobqueue.StartDispatcher(config.Config.TimingIterations.NumWorkerThreads)
 
 	log.Print("Initializing web services")
 	m := gin.New()
