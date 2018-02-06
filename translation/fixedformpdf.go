@@ -125,17 +125,20 @@ func (self *TranslateFixedFormPDF) RenderElement(c *creator.Creator, pageObj mod
 	// Row / Y
 	yPos := float64((float64(element.Row) * pageObj.Format.Pdf.Scaling.Vertical) + pageObj.Format.Pdf.Offset.Vertical)
 
+	font_st := time.Now()
+
 	p.SetFont(fonts.NewFontCourier())
 	p.SetFontSize(pageObj.Format.Pdf.Font.Size)
 	p.SetPos(xPos, yPos)
 
 	if self.Benchmark {
-		log.Printf("-- RenderElement(): SetFont/Pos: %s", time.Now().Sub(st).String())
+		log.Printf("-- RenderElement(): SetFont/Pos: %s", time.Now().Sub(font_st).String())
 	}
 	// Push to current page
+	draw_st := time.Now()
 	err = c.Draw(p)
 	if self.Benchmark {
-		log.Printf("-- RenderElement(): Draw: %s", time.Now().Sub(st).String())
+		log.Printf("-- RenderElement(): Draw: %s", time.Now().Sub(draw_st).String())
 	}
 	return err
 }
