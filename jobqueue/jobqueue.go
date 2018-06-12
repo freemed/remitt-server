@@ -2,11 +2,15 @@ package jobqueue
 
 import (
 	"fmt"
+	"io/ioutil"
 	"log"
+	"os"
 	"strconv"
 	"sync"
 	"time"
 
+	"github.com/freemed/remitt-server/common"
+	"github.com/freemed/remitt-server/config"
 	"github.com/freemed/remitt-server/model"
 )
 
@@ -40,17 +44,23 @@ func init() {
 }
 
 type JobQueueItem struct {
-	Id        int64          `json:"job_id"`
-	Status    string         `json:"status"`
-	Enqueued  time.Time      `json:"enqueued"`
-	Started   model.NullTime `json:"started"`
-	Completed model.NullTime `json:"completed"`
-	Message   string         `json:"message"`
-	Log       []string       `json:"log"`
-	Action    string         `json:"action"`
-	User      string         `json:"user"`
-	Ip        string         `json:"ip"`
-	lock      *sync.RWMutex
+	Id              int64          `json:"job_id"`
+	Status          string         `json:"status"`
+	Enqueued        time.Time      `json:"enqueued"`
+	Started         model.NullTime `json:"started"`
+	Completed       model.NullTime `json:"completed"`
+	Message         string         `json:"message"`
+	Log             []string       `json:"log"`
+	Action          string         `json:"action"`
+	User            string         `json:"user"`
+	Ip              string         `json:"ip"`
+	Payload         []byte
+	RenderPlugin    string
+	RenderOption    string
+	TransportPlugin string
+	TransportOption string
+	OriginalId      string
+	lock            *sync.RWMutex
 }
 
 func (o *JobQueueItem) ReadLock() {
@@ -111,6 +121,37 @@ func (o *JobQueueItem) Fail(err error) {
 	o.AppendLog(err.Error())
 	o.Message = err.Error()
 	o.lock.Unlock()
+}
+
+func (o *JobQueueItem) Render() (out []byte, err error) {
+	// Create temporary
+	inxml, err := ioutil.TempFile("/tmp", "render-in")
+	if err != nil {
+		log.Printf("Render(): %s", err.Error())
+		return
+	}
+	defer os.Remove(inxml.Name())
+	_, err = inxml.Write(o.Payload)
+	if err != nil {
+		log.Printf("Render(): %s", err.Error())
+		return
+	}
+
+	outxml, err := ioutil.TempFile("/tmp", "render-out")
+	if err != nil {
+		log.Printf("Render(): %s", err.Error())
+		return
+	}
+	//defer os.Remove(outxml.Name())
+
+	xslfile := config.Config.Paths.BasePath + string(os.PathSeparator) + "resources" + string(os.PathSeparator) + "xsl" + string(os.PathSeparator) + o.RenderOption + ".xsl"
+	err = common.XslTransformExternal(inxml.Name(), xslfile, outxml.Name(), map[string]string{})
+
+	// Bring data back in by reading again
+	outxml.Close()
+	out, err = ioutil.ReadFile(outxml.Name())
+	os.Remove(outxml.Name())
+	return
 }
 
 // NewWorker creates, and returns a new Worker object. Its only argument
@@ -228,8 +269,33 @@ func processJobQueueItem(w *JobQueueItem) error {
 		})
 	*/
 
-	// TODO: Execute job
-	// return executeJob(w, &systemObj, appUser)
+	err := executeJob(w)
+	return err
+}
 
-	return nil
+// executeJob performs the actual worker task
+func executeJob(w *JobQueueItem) error {
+	// Render
+	inxml, err := ioutil.TempFile("/tmp", "render-in")
+	if err != nil {
+		log.Printf("executeJob(): %s", err.Error())
+		return err
+	}
+	defer os.Remove(inxml.Name())
+	outxml, err := ioutil.TempFile("/tmp", "render-out")
+	if err != nil {
+		log.Printf("executeJob(): %s", err.Error())
+		return err
+	}
+	defer os.Remove(outxml.Name())
+	xslfile := config.Config.Paths.BasePath + string(os.PathSeparator) + "resources" + string(os.PathSeparator) + "xsl" + string(os.PathSeparator) + w.RenderOption + ".xsl"
+	err = common.XslTransformExternal(inxml.Name(), xslfile, outxml.Name(), map[string]string{})
+
+	// Resolve translation plugin
+
+	// Translation
+
+	// Transmission
+
+	return err
 }

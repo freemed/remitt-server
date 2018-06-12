@@ -16,8 +16,8 @@ type FixedFormPage struct {
 			Template string `xml:"template,attr"`
 			Page     int    `xml:"page,attr"`
 			Font     struct {
-				Name string `xml:"name,attr"`
-				Size float64  `xml:"size,attr"`
+				Name string  `xml:"name,attr"`
+				Size float64 `xml:"size,attr"`
 			} `xml:"font"`
 			Scaling struct {
 				Vertical   float64 `xml:"vertical,attr"`
