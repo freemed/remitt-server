@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/freemed/remitt-server/config"
-	"github.com/jbowtie/gokogiri/xml"
+	"github.com/moovweb/gokogiri/xml"
 	"github.com/jbowtie/ratago/xslt"
 )
 
