@@ -1,7 +1,7 @@
 language: go
 go:
-  - 1.5
-  - 1.6
+  - 1.9
+  - 1.10
   - tip
 script:
   - go get -d -v
