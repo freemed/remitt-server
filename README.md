@@ -17,7 +17,8 @@ Uses:
  * [Bootstrap](http://getbootstrap.com): Responsive framework
  * [Bootstrap-Switch](http://www.bootstrap-switch.org): Switches for Bootstrap
  * [toastr](https://github.com/CodeSeven/toastr): Toaster widget
- * [ratago](https://github.com/jbowtie/ratago): Native XSLT support
+ * [gokogiri](https://github.com/freemed/gokogiri): Native XML processing support
+ * [ratago](https://github.com/freemed/ratago): Native XSLT support
  * [manners](https://github.com/braintree/manners): Graceful http/https serving
 
 Code in this repository can be run against a valid REMITT 0.5.x series database with no modifications.

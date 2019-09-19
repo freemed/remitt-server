@@ -7,10 +7,18 @@ import (
 	"github.com/freemed/remitt-server/model"
 )
 
+func init() {
+	RegisterTranslator("x12xml", func() Translator { return &TranslateX12Xml{} })
+}
+
 type TranslateX12Xml struct {
 	Hl        map[string]int
 	HlCounter int
 	Counters  map[string]int
+}
+
+func (self *TranslateX12Xml) Resolver(in string, out string) bool {
+	return (in == "x12xml" && out == "x12")
 }
 
 func (self *TranslateX12Xml) Translate(source interface{}) (out []byte, err error) {

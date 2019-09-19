@@ -30,12 +30,20 @@
   version = "0.4.0"
 
 [[constraint]]
+  name = "github.com/freemed/gokogiri"
+  version = "4.7.32"
+
+[[constraint]]
+  name = "github.com/freemed/ratago"
+  version = "0.4.0-pre"
+
+[[constraint]]
   branch = "master"
   name = "github.com/gin-gonic/contrib"
 
 [[constraint]]
   name = "github.com/gin-gonic/gin"
-  version = "1.2.0"
+  version = "1.4.0"
 
 [[constraint]]
   name = "github.com/go-gorp/gorp"
@@ -43,15 +51,7 @@
 
 [[constraint]]
   name = "github.com/go-sql-driver/mysql"
-  version = "1.4.0"
-
-[[constraint]]
-  name = "github.com/jbowtie/gokogiri"
-  version = "4.7.32"
-
-[[constraint]]
-  name = "github.com/jbowtie/ratago"
-  version = "0.4.0-pre"
+  version = "1.4.1"
 
 [[constraint]]
   name = "github.com/mattes/migrate"
@@ -63,11 +63,11 @@
 
 [[constraint]]
   name = "github.com/unidoc/unidoc"
-  version = "2.1.0"
+  version = "2.2.0"
 
 [[constraint]]
   name = "gopkg.in/yaml.v2"
-  version = "2.2.1"
+  version = "2.2.2"
 
 [prune]
   go-tests = true

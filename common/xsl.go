@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"github.com/freemed/remitt-server/config"
-	"github.com/jbowtie/ratago/xslt"
-	"github.com/moovweb/gokogiri/xml"
+	"github.com/freemed/ratago/xslt"
+	"github.com/freemed/gokogiri/xml"
 )
 
 // XslTransform uses the ratago native Go XSL implementation to perform XSL

@@ -18,14 +18,16 @@ import (
 )
 
 var (
-	ConfigFile = flag.String("config-file", "./remitt.yml", "Configuration file")
-	Debug      = flag.Bool("debug", false, "Enable debugging (overrides config)")
+	configFile = flag.String("config-file", "./remitt.yml", "Configuration file")
+	debug      = flag.Bool("debug", false, "Enable debugging (overrides config)")
 )
 
 func main() {
 	flag.Parse()
 
-	c, err := config.LoadConfigWithDefaults(*ConfigFile)
+	log.SetFlags(log.LstdFlags | log.Ltime | log.Lshortfile)
+
+	c, err := config.LoadConfigWithDefaults(*configFile)
 	if err != nil {
 		panic(err)
 	}
@@ -34,7 +36,7 @@ func main() {
 	}
 	config.Config = c
 
-	if *Debug {
+	if *debug {
 		log.Print("Overriding existing debug configuration")
 		config.Config.Debug = true
 	} else {

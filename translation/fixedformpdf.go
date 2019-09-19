@@ -3,6 +3,7 @@ package translation
 import (
 	"bytes"
 	"errors"
+
 	//"fmt"
 	"log"
 	"os"
@@ -15,10 +16,18 @@ import (
 	"github.com/unidoc/unidoc/pdf/model/fonts"
 )
 
+func init() {
+	RegisterTranslator("fixedformpdf", func() Translator { return &TranslateFixedFormPDF{} })
+}
+
 type TranslateFixedFormPDF struct {
 	TemplatePath string
 	Debug        bool
 	Benchmark    bool
+}
+
+func (self *TranslateFixedFormPDF) Resolver(in string, out string) bool {
+	return (in == "fixedformxml" && out == "pdf")
 }
 
 func (self *TranslateFixedFormPDF) Translate(source interface{}) (out []byte, err error) {

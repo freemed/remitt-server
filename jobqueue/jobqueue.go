@@ -12,6 +12,8 @@ import (
 	"github.com/freemed/remitt-server/common"
 	"github.com/freemed/remitt-server/config"
 	"github.com/freemed/remitt-server/model"
+	"github.com/freemed/remitt-server/translation"
+	"github.com/freemed/remitt-server/transmission"
 )
 
 const (
@@ -145,7 +147,11 @@ func (o *JobQueueItem) Render() (out []byte, err error) {
 	//defer os.Remove(outxml.Name())
 
 	xslfile := config.Config.Paths.BasePath + string(os.PathSeparator) + "resources" + string(os.PathSeparator) + "xsl" + string(os.PathSeparator) + o.RenderOption + ".xsl"
-	err = common.XslTransformExternal(inxml.Name(), xslfile, outxml.Name(), map[string]string{})
+	if config.Config.InternalXslt {
+		err = common.XslTransform(inxml.Name(), xslfile, outxml.Name(), map[string]string{})
+	} else {
+		err = common.XslTransformExternal(inxml.Name(), xslfile, outxml.Name(), map[string]string{})
+	}
 
 	// Bring data back in by reading again
 	outxml.Close()
@@ -289,13 +295,58 @@ func executeJob(w *JobQueueItem) error {
 	}
 	defer os.Remove(outxml.Name())
 	xslfile := config.Config.Paths.BasePath + string(os.PathSeparator) + "resources" + string(os.PathSeparator) + "xsl" + string(os.PathSeparator) + w.RenderOption + ".xsl"
-	err = common.XslTransformExternal(inxml.Name(), xslfile, outxml.Name(), map[string]string{})
+	if config.Config.InternalXslt {
+		err = common.XslTransform(inxml.Name(), xslfile, outxml.Name(), map[string]string{})
+	} else {
+		err = common.XslTransformExternal(inxml.Name(), xslfile, outxml.Name(), map[string]string{})
+	}
+	err = outxml.Close()
+	if err != nil {
+		w.Fail(err)
+		return err
+	}
+	renderedData, err := ioutil.ReadFile(outxml.Name())
+	if err != nil {
+		w.Fail(err)
+		return err
+	}
+
+	// Instantiate transmission plugin
+	transmissionPlugin, err := transmission.InstantiateTransmitter(w.TransportPlugin)
+	if err != nil {
+		w.Fail(err)
+		return err
+	}
 
 	// Resolve translation plugin
+	translationPluginName, err := translation.ResolveTranslator(w.RenderOption, transmissionPlugin.InputFormat())
+	if err != nil {
+		w.Fail(err)
+		return err
+	}
+	log.Printf("Resolved plugin %s for %s -> %s", translationPluginName, w.RenderOption, transmissionPlugin.InputFormat())
+
+	// Instantiate translation plugin
+	translationPlugin, err := translation.InstantiateTranslator(translationPluginName)
+	if err != nil {
+		w.Fail(err)
+		return err
+	}
 
 	// Translation
+	translatedData, err := translationPlugin.Translate(renderedData)
+	if err != nil {
+		w.Fail(err)
+		return err
+	}
 
 	// Transmission
+	err = transmissionPlugin.Transmit(translatedData)
+	if err != nil {
+		w.Fail(err)
+		return err
+	}
 
-	return err
+	w.Finish()
+	return nil
 }

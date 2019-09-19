@@ -2,99 +2,144 @@
 
 
 [[projects]]
+  digest = "1:57840705195634873ce9e1fa65d87dd1169352f793e6e3cfb81570b95350a79b"
   name = "github.com/braintree/manners"
   packages = ["."]
+  pruneopts = "UT"
   revision = "0b5e6b2c2843f4c83c2a40f96980b09cf4af733c"
   version = "0.4.0"
 
 [[projects]]
-  branch = "master"
-  name = "github.com/gin-contrib/sse"
-  packages = ["."]
-  revision = "22d885f9ecc78bf4ee5d72b937e4bbcdc58e8cae"
-
-[[projects]]
-  branch = "master"
-  name = "github.com/gin-gonic/contrib"
-  packages = ["gzip"]
-  revision = "6ea35d32286ce194572a0dc2a3398aac0091228d"
-
-[[projects]]
-  name = "github.com/gin-gonic/gin"
-  packages = [
-    ".",
-    "binding",
-    "render"
-  ]
-  revision = "d459835d2b077e44f7c9b453505ee29881d5d12d"
-  version = "v1.2"
-
-[[projects]]
-  name = "github.com/go-gorp/gorp"
-  packages = ["."]
-  revision = "4df78490a9aa9a78b9b02b0c913df8dc1954faee"
-  version = "2.1"
-
-[[projects]]
-  name = "github.com/go-sql-driver/mysql"
-  packages = ["."]
-  revision = "d523deb1b23d913de5bdada721a6071e71283618"
-  version = "v1.4.0"
-
-[[projects]]
-  name = "github.com/golang/protobuf"
-  packages = ["proto"]
-  revision = "5a0f697c9ed9d68fef0116532c6e05cfeae00e55"
-
-[[projects]]
-  name = "github.com/jbowtie/gokogiri"
+  digest = "1:31e0b7c6d28ddfa05aa87103ab1ce8318f443982c0b096140a07f38d72686729"
+  name = "github.com/freemed/gokogiri"
   packages = ["xml"]
+  pruneopts = "UT"
   revision = "a79a377719ed7307bd4016dfeb928886a9664406"
   version = "4.7.32"
 
 [[projects]]
-  name = "github.com/jbowtie/ratago"
+  digest = "1:37d19f4e154dca4c4f17d096854914f8a9ad7f851f99ff2076727ecac8ce5f56"
+  name = "github.com/freemed/ratago"
   packages = ["xslt"]
+  pruneopts = "UT"
   revision = "52847d58250190734ea48a65899a4156ce5bf690"
   version = "v0.4-pre"
 
 [[projects]]
+  digest = "1:a4b5a6b32f33323c7850fae4ec085a0fbac3be93c057b6b8cef5bcabe24645ac"
+  name = "github.com/gin-contrib/sse"
+  packages = ["."]
+  pruneopts = "UT"
+  revision = "5545eab6dad3bbbd6c5ae9186383c2a9d23c0dae"
+
+[[projects]]
+  branch = "master"
+  digest = "1:a42117a847642aeb63a2cc6563177cc62e11061768ec9d918317bd23fdc544a5"
+  name = "github.com/gin-gonic/contrib"
+  packages = ["gzip"]
+  pruneopts = "UT"
+  revision = "7fb7810ed2a0c49532e0005d77953bb5572f0525"
+
+[[projects]]
+  digest = "1:d8bd2a337f6ff2188e08f72c614f2f3f0fd48e6a7b37a071b197e427d77d3a47"
+  name = "github.com/gin-gonic/gin"
+  packages = [
+    ".",
+    "binding",
+    "internal/json",
+    "render",
+  ]
+  pruneopts = "UT"
+  revision = "b75d67cd51eb53c3c3a2fc406524c940021ffbda"
+  version = "v1.4.0"
+
+[[projects]]
+  digest = "1:670d1f29fa2aa15ea777cc5bcf95881f379bf8a71dbbe145be0774da97fede72"
+  name = "github.com/go-gorp/gorp"
+  packages = ["."]
+  pruneopts = "UT"
+  revision = "4df78490a9aa9a78b9b02b0c913df8dc1954faee"
+  version = "2.1"
+
+[[projects]]
+  digest = "1:ec6f9bf5e274c833c911923c9193867f3f18788c461f76f05f62bb1510e0ae65"
+  name = "github.com/go-sql-driver/mysql"
+  packages = ["."]
+  pruneopts = "UT"
+  revision = "72cd26f257d44c1114970e19afddcd812016007e"
+  version = "v1.4.1"
+
+[[projects]]
+  digest = "1:318f1c959a8a740366fce4b1e1eb2fd914036b4af58fbd0a003349b305f118ad"
+  name = "github.com/golang/protobuf"
+  packages = ["proto"]
+  pruneopts = "UT"
+  revision = "c823c79ea1570fb5ff454033735a8e68575d1d0f"
+  version = "v1.3.0"
+
+[[projects]]
+  digest = "1:f5a2051c55d05548d2d4fd23d244027b59fbd943217df8aa3b5e170ac2fd6e1b"
+  name = "github.com/json-iterator/go"
+  packages = ["."]
+  pruneopts = "UT"
+  revision = "0ff49de124c6f76f8494e194af75bde0f1a49a29"
+  version = "v1.1.6"
+
+[[projects]]
+  digest = "1:07a6c55a37ecffa0109b02edea1f25ac986786468cb594c5a8c938c40d0a02f5"
   name = "github.com/mattes/migrate"
   packages = [
     ".",
     "database",
     "database/mysql",
-    "source"
+    "source",
   ]
+  pruneopts = "UT"
   revision = "035c07716cd373d88456ec4d701402df52584cb4"
   version = "v3.0.1"
 
 [[projects]]
+  digest = "1:e150b5fafbd7607e2d638e4e5cf43aa4100124e5593385147b0a74e2733d8b0d"
   name = "github.com/mattn/go-isatty"
   packages = ["."]
-  revision = "57fdcb988a5c543893cc61bce354a6e24ab70022"
+  pruneopts = "UT"
+  revision = "c2a7a6ca930a4cd0bc33a3f298eb71960732a3a7"
+  version = "v0.0.7"
 
 [[projects]]
-  name = "github.com/moovweb/gokogiri"
-  packages = [
-    "xml",
-    "xpath"
-  ]
-  revision = "01934aae410bb84239223d7640da19526910d039"
-  version = "5.999.253"
+  digest = "1:33422d238f147d247752996a26574ac48dcf472976eda7f5134015f06bf16563"
+  name = "github.com/modern-go/concurrent"
+  packages = ["."]
+  pruneopts = "UT"
+  revision = "bacd9c7ef1dd9b15be4a9909b8ac7a4e313eec94"
+  version = "1.0.3"
+
+[[projects]]
+  digest = "1:e32bdbdb7c377a07a9a46378290059822efdce5c8d96fe71940d87cb4f918855"
+  name = "github.com/modern-go/reflect2"
+  packages = ["."]
+  pruneopts = "UT"
+  revision = "4b7aa43c6742a2c18fdef89dd197aaae7dac7ccd"
+  version = "1.0.1"
 
 [[projects]]
   branch = "master"
+  digest = "1:a53273cdf0557db47f7cc2ece57fb305705d6bb4bbc0273cedc4c53ffacb658a"
   name = "github.com/orcaman/writerseeker"
   packages = ["."]
-  revision = "bec89464ed15e03d2ecd9145eb0669eabbc42d49"
+  pruneopts = "UT"
+  revision = "774071c66cec2dae979aefb54a4d095ac714c848"
 
 [[projects]]
+  digest = "1:d0072748c62defde1ad99dde77f6ffce492a0e5aea9204077e497c7edfb86653"
   name = "github.com/ugorji/go"
   packages = ["codec"]
-  revision = "c88ee250d0221a57af388746f5cf03768c21d6e2"
+  pruneopts = "UT"
+  revision = "2adff0894ba3bc2eeb9f9aea45fefd49802e1a13"
+  version = "v1.1.4"
 
 [[projects]]
+  digest = "1:69b0833556092b254b0a86b54b2e7ab67da115ffcf0b2a3751dde840a65a3a65"
   name = "github.com/unidoc/unidoc"
   packages = [
     "common",
@@ -107,44 +152,70 @@
     "pdf/model/fonts",
     "pdf/model/sampling",
     "pdf/model/textencoding",
-    "pdf/ps"
+    "pdf/ps",
   ]
-  revision = "817ea404b9592ca684ca101ec4de2ebd2c4792ef"
-  version = "v2.1.0"
+  pruneopts = "UT"
+  revision = "2752beb6f0cdbae03254246e8f26f1e3455518c8"
+  version = "v2.2.0"
 
 [[projects]]
   branch = "master"
+  digest = "1:653bbf012fde4ff9682b02f3f938a55ffa90593b8118723ab67f948983871ce5"
   name = "golang.org/x/image"
   packages = ["tiff/lzw"]
-  revision = "af66defab954cb421ca110193eed9477c8541e2a"
+  pruneopts = "UT"
+  revision = "69e4b8554b2a817a1f0015867f0858d02801f0f5"
 
 [[projects]]
   branch = "master"
+  digest = "1:ec9d9815894f067c7878330735b9e4dfa6dc61234d2ba136b60a1436d6b5ea94"
   name = "golang.org/x/sys"
   packages = ["unix"]
-  revision = "a9e25c09b96b8870693763211309e213c6ef299d"
+  pruneopts = "UT"
+  revision = "b4ddaad3f8a36719f2b8bc6486c14cc468ca2bb5"
 
 [[projects]]
+  digest = "1:c25289f43ac4a68d88b02245742347c94f1e108c534dda442188015ff80669b3"
   name = "google.golang.org/appengine"
   packages = ["cloudsql"]
-  revision = "150dc57a1b433e64154302bdc40b6bb8aefa313a"
-  version = "v1.0.0"
+  pruneopts = "UT"
+  revision = "5f2a59506353b8d5ba8cbbcd9f3c1f41f1eaf079"
+  version = "v1.6.2"
 
 [[projects]]
+  digest = "1:cbc72c4c4886a918d6ab4b95e347ffe259846260f99ebdd8a198c2331cf2b2e9"
   name = "gopkg.in/go-playground/validator.v8"
   packages = ["."]
-  revision = "5f57d2222ad794d0dffb07e664ea05e2ee07d60c"
-  version = "v8.18.1"
+  pruneopts = "UT"
+  revision = "5f1438d3fca68893a817e4a66806cea46a9e4ebf"
+  version = "v8.18.2"
 
 [[projects]]
+  digest = "1:4d2e5a73dc1500038e504a8d78b986630e3626dc027bc030ba5c75da257cdb96"
   name = "gopkg.in/yaml.v2"
   packages = ["."]
-  revision = "5420a8b6744d3b0345ab293f6fcba19c978f1183"
-  version = "v2.2.1"
+  pruneopts = "UT"
+  revision = "51d6538a90f86fe93ac480b35f37b2be17fef232"
+  version = "v2.2.2"
 
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "4671c737c133c346561560ae8c9cd3667da3c3e84a795489685830882ddfd80e"
+  input-imports = [
+    "github.com/braintree/manners",
+    "github.com/freemed/gokogiri/xml",
+    "github.com/freemed/ratago/xslt",
+    "github.com/gin-gonic/contrib/gzip",
+    "github.com/gin-gonic/gin",
+    "github.com/go-gorp/gorp",
+    "github.com/go-sql-driver/mysql",
+    "github.com/mattes/migrate",
+    "github.com/mattes/migrate/database/mysql",
+    "github.com/orcaman/writerseeker",
+    "github.com/unidoc/unidoc/pdf/creator",
+    "github.com/unidoc/unidoc/pdf/model",
+    "github.com/unidoc/unidoc/pdf/model/fonts",
+    "gopkg.in/yaml.v2",
+  ]
   solver-name = "gps-cdcl"
   solver-version = 1
