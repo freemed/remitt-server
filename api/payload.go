@@ -1,23 +1,25 @@
 package api
 
 import (
-	"github.com/freemed/remitt-server/common"
-	"github.com/freemed/remitt-server/model"
-	"github.com/gin-gonic/gin"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
+
+	"github.com/freemed/remitt-server/common"
+	"github.com/freemed/remitt-server/model"
+	"github.com/gin-gonic/gin"
 )
 
 func init() {
 	common.ApiMap["payload"] = func(r *gin.RouterGroup) {
-		r.POST("/", PayloadInsert)
-		r.GET("/resubmit/:id", PayloadResubmit)
+		r.POST("/", apiPayloadInsert)
+		r.GET("/resubmit/:id", apiPayloadResubmit)
 	}
 }
 
 type inputPayload struct {
-	OriginalId      model.NullString `json:"original_id"`
+	OriginalID      model.NullString `json:"original_id"`
 	InputPayload    string           `json:"input_payload"`
 	RenderPlugin    string           `json:"render_plugin"`
 	RenderOption    string           `json:"render_option"`
@@ -25,8 +27,10 @@ type inputPayload struct {
 	TransportOption string           `json:"transport_option"`
 }
 
-func PayloadInsert(c *gin.Context) {
+func apiPayloadInsert(c *gin.Context) {
 	user := c.MustGet(gin.AuthUserKey).(string)
+
+	tag := fmt.Sprintf("apiPayloadInsert() [%s]: ", user)
 
 	var raw inputPayload
 	if c.BindJSON(&raw) != nil {
@@ -41,38 +45,40 @@ func PayloadInsert(c *gin.Context) {
 		RenderOption:    raw.RenderOption,
 		TransportPlugin: raw.TransportPlugin,
 		TransportOption: raw.TransportOption,
-		OriginalId:      raw.OriginalId,
+		OriginalId:      raw.OriginalID,
 	}
 
 	err := model.DbMap.Insert(&obj)
 	if err != nil {
-		log.Print(err.Error())
+		log.Print(tag + err.Error())
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}
 	c.JSON(http.StatusOK, obj.Id)
 }
 
-func PayloadResubmit(c *gin.Context) {
+func apiPayloadResubmit(c *gin.Context) {
 	user := c.MustGet(gin.AuthUserKey).(string)
+
+	tag := fmt.Sprintf("apiPayloadResubmit() [%s]: ", user)
 
 	id, err := common.ParamInt(c, "id")
 	if err != nil {
-		log.Print(err.Error())
+		log.Print(tag + err.Error())
 		c.AbortWithError(http.StatusBadRequest, err)
 		return
 	}
 
 	obj, err := model.DbMap.Get(model.PayloadModel{}, id)
 	if err != nil {
-		log.Print(err.Error())
+		log.Print(tag + err.Error())
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}
 	payload := obj.(*model.PayloadModel)
 
 	if payload.User != user {
-		log.Printf("PayloadResubmit() [%s]: payload user is not correct : %s != %s", user, payload.User, user)
+		log.Printf(tag+"payload user is not correct : %s != %s", user, payload.User, user)
 		c.AbortWithStatus(http.StatusUnauthorized)
 		return
 	}
@@ -85,7 +91,7 @@ func PayloadResubmit(c *gin.Context) {
 	// Reinsert
 	err = model.DbMap.Insert(&payload)
 	if err != nil {
-		log.Print(err.Error())
+		log.Print(tag + err.Error())
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}

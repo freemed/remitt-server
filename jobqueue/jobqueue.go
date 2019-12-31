@@ -13,7 +13,7 @@ import (
 	"github.com/freemed/remitt-server/config"
 	"github.com/freemed/remitt-server/model"
 	"github.com/freemed/remitt-server/translation"
-	"github.com/freemed/remitt-server/transmission"
+	"github.com/freemed/remitt-server/transport"
 )
 
 const (
@@ -45,8 +45,9 @@ func init() {
 	jobQueue = map[int64]*JobQueueItem{}
 }
 
+// JobQueueItem represents an individual job status
 type JobQueueItem struct {
-	Id              int64          `json:"job_id"`
+	ID              int64          `json:"job_id"`
 	Status          string         `json:"status"`
 	Enqueued        time.Time      `json:"enqueued"`
 	Started         model.NullTime `json:"started"`
@@ -55,13 +56,13 @@ type JobQueueItem struct {
 	Log             []string       `json:"log"`
 	Action          string         `json:"action"`
 	User            string         `json:"user"`
-	Ip              string         `json:"ip"`
+	IP              string         `json:"ip"`
 	Payload         []byte
 	RenderPlugin    string
 	RenderOption    string
 	TransportPlugin string
 	TransportOption string
-	OriginalId      string
+	OriginalID      string
 	lock            *sync.RWMutex
 }
 
@@ -82,7 +83,7 @@ func (o *JobQueueItem) Unlock() {
 }
 
 func (o *JobQueueItem) AppendLog(item string) {
-	log.Printf("JobQueue status %d | %s", o.Id, item)
+	log.Printf("JobQueue status %d | %s", o.ID, item)
 	o.lock.Lock()
 	if o.Log == nil {
 		o.Log = make([]string, 0)
@@ -174,6 +175,7 @@ func NewWorker(id int, workerQueue chan chan JobQueueItem) Worker {
 	return worker
 }
 
+// Worker represents the individual job worker status
 type Worker struct {
 	ID          int
 	Work        chan JobQueueItem
@@ -181,7 +183,7 @@ type Worker struct {
 	QuitChan    chan bool
 }
 
-// This function "starts" the worker by starting a goroutine, that is
+// Start "starts" the worker by starting a goroutine, that is
 // an infinite "for-select" loop.
 func (w Worker) Start() {
 	go func() {
@@ -192,11 +194,11 @@ func (w Worker) Start() {
 			select {
 			case work := <-w.Work:
 				// Receive a work request.
-				log.Printf("worker[%d]: Received work request id == %d, action == %s", w.ID, work.Id, work.Action)
+				log.Printf("worker[%d]: Received work request id == %d, action == %s", w.ID, work.ID, work.Action)
 
 				// Pull from jobStatusMap
 				jobQueueLock.RLock()
-				i := jobQueue[work.Id]
+				i := jobQueue[work.ID]
 				jobQueueLock.RUnlock()
 
 				// Mark as PROCESSING
@@ -232,6 +234,7 @@ func (w Worker) Stop() {
 	}()
 }
 
+// StartDispatcher initializes the jobqueue dispatcher with nworker workers
 func StartDispatcher(nworkers int) {
 	// First, initialize the channel we are going to but the workers' work channels into.
 	WorkerQueue = make(chan chan JobQueueItem, nworkers)
@@ -281,10 +284,12 @@ func processJobQueueItem(w *JobQueueItem) error {
 
 // executeJob performs the actual worker task
 func executeJob(w *JobQueueItem) error {
+	tag := fmt.Sprintf("executeJob(%d): ", w.ID)
+
 	// Render
 	inxml, err := ioutil.TempFile("/tmp", "render-in")
 	if err != nil {
-		log.Printf("executeJob(): %s", err.Error())
+		log.Printf(tag+"%s", err.Error())
 		return err
 	}
 	defer os.Remove(inxml.Name())
@@ -311,20 +316,20 @@ func executeJob(w *JobQueueItem) error {
 		return err
 	}
 
-	// Instantiate transmission plugin
-	transmissionPlugin, err := transmission.InstantiateTransmitter(w.TransportPlugin)
+	// Instantiate transport plugin
+	transportPlugin, err := transport.InstantiateTransporter(w.TransportPlugin)
 	if err != nil {
 		w.Fail(err)
 		return err
 	}
 
 	// Resolve translation plugin
-	translationPluginName, err := translation.ResolveTranslator(w.RenderOption, transmissionPlugin.InputFormat())
+	translationPluginName, err := translation.ResolveTranslator(w.RenderOption, transportPlugin.InputFormat())
 	if err != nil {
 		w.Fail(err)
 		return err
 	}
-	log.Printf("Resolved plugin %s for %s -> %s", translationPluginName, w.RenderOption, transmissionPlugin.InputFormat())
+	log.Printf(tag+"Resolved plugin %s for %s -> %s", translationPluginName, w.RenderOption, transportPlugin.InputFormat())
 
 	// Instantiate translation plugin
 	translationPlugin, err := translation.InstantiateTranslator(translationPluginName)
@@ -341,7 +346,7 @@ func executeJob(w *JobQueueItem) error {
 	}
 
 	// Transmission
-	err = transmissionPlugin.Transmit(translatedData)
+	err = transportPlugin.Transport(translatedData)
 	if err != nil {
 		w.Fail(err)
 		return err

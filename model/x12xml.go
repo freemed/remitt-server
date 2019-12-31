@@ -25,8 +25,11 @@ type X12Element struct {
 	Counter struct {
 		Counter string `xml:"counter"`
 		Name    string `xml:"name,attr"`
-	} `xml:"counter"`
-	SegmentCount string `xml:"segmentcount"`
+	} `xml:"counter,omitempty"`
+	ResetCounter struct {
+		Name string `xml:"name,attr"`
+	} `xml:"resetcounter,omitempty"`
+	SegmentCount string `xml:"segmentcount,omitempty"`
 	Content      struct {
 		Content     string `xml:",innerxml"`
 		Text        string `xml:"text,attr"`

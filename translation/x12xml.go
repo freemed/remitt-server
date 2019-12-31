@@ -24,7 +24,9 @@ func (self *TranslateX12Xml) Resolver(in string, out string) bool {
 func (self *TranslateX12Xml) Translate(source interface{}) (out []byte, err error) {
 	src, ok := source.(model.X12Xml)
 	if !ok {
+		out = []byte{}
 		err = errors.New("invalid datatype presented")
+		return
 	}
 
 	self.Hl = map[string]int{}
@@ -68,7 +70,10 @@ func (self *TranslateX12Xml) RenderSegment(source model.X12Xml, segment model.X1
 			continue
 		}
 
-		// TODO: FIXME: implement resetcounter
+		// Reset counter
+		if el.ResetCounter.Name != "" {
+			self.Counters[el.ResetCounter.Name] = 0
+		}
 
 		if el.Counter.Name != "" {
 			_, ok := self.Counters[el.Counter.Name]

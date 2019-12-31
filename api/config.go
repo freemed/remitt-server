@@ -1,44 +1,47 @@
 package api
 
 import (
+	"fmt"
+	"log"
+	"net/http"
+
 	"github.com/freemed/remitt-server/common"
 	"github.com/freemed/remitt-server/model"
 	"github.com/gin-gonic/gin"
-	"log"
-	"net/http"
 )
 
 func init() {
 	common.ApiMap["config"] = func(r *gin.RouterGroup) {
-		r.GET("/all", ConfigGetAll)
-		r.POST("/set/:namespace/:option", ConfigSetValue)
+		r.GET("/all", apiConfigGetAll)
+		r.POST("/set/:namespace/:option/:value", apiConfigSetValue)
 		//r.Get("/view", MessagesView)
 	}
 }
 
-func ConfigGetAll(c *gin.Context) {
+func apiConfigGetAll(c *gin.Context) {
 	user := c.MustGet(gin.AuthUserKey).(string)
+	tag := fmt.Sprintf("ConfigGetAll(%s): ", user)
 	o, err := model.GetConfigValues(user)
 	if err != nil {
-		log.Print(err.Error())
+		log.Print(tag + err.Error())
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}
 	c.JSON(http.StatusOK, o)
 }
 
-func ConfigSetValue(c *gin.Context) {
+func apiConfigSetValue(c *gin.Context) {
 	user := c.MustGet(gin.AuthUserKey).(string)
 
 	namespace := c.Param("namespace")
 	option := c.Param("option")
+	value := c.Param("value")
 
-	// TODO: FIXME: get actual value
-	value := []byte{}
+	tag := fmt.Sprintf("ConfigGetAll(%s,%s,%s) [%s]: ", namespace, option, value, user)
 
-	err := model.SetConfigValue(user, namespace, option, value)
+	err := model.SetConfigValue(user, namespace, option, []byte(value))
 	if err != nil {
-		log.Print(err.Error())
+		log.Print(tag + err.Error())
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}

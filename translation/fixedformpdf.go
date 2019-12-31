@@ -3,6 +3,7 @@ package translation
 import (
 	"bytes"
 	"errors"
+	"strings"
 
 	//"fmt"
 	"log"
@@ -26,14 +27,14 @@ type TranslateFixedFormPDF struct {
 	Benchmark    bool
 }
 
-func (self *TranslateFixedFormPDF) Resolver(in string, out string) bool {
+func (t *TranslateFixedFormPDF) Resolver(in string, out string) bool {
 	return (in == "fixedformxml" && out == "pdf")
 }
 
-func (self *TranslateFixedFormPDF) Translate(source interface{}) (out []byte, err error) {
+func (t *TranslateFixedFormPDF) Translate(source interface{}) (out []byte, err error) {
 	st := time.Now()
 
-	if self.Debug {
+	if t.Debug {
 		log.Printf("Translate()")
 	}
 
@@ -42,18 +43,18 @@ func (self *TranslateFixedFormPDF) Translate(source interface{}) (out []byte, er
 		err = errors.New("invalid datatype presented")
 	}
 
-	if self.Benchmark {
+	if t.Benchmark {
 		log.Printf("Conversion : %s", time.Now().Sub(st).String())
 	}
 
 	// Create new PDF factory with unidoc
 	c := creator.New()
-	for iter, _ := range src.Pages {
-		err = self.RenderPage(c, src.Pages[iter])
+	for iter := range src.Pages {
+		err = t.RenderPage(c, src.Pages[iter])
 		if err != nil {
 			return
 		}
-		if self.Benchmark {
+		if t.Benchmark {
 			log.Printf("Page %d : %s", iter+1, time.Now().Sub(st).String())
 		}
 	}
@@ -68,12 +69,12 @@ func (self *TranslateFixedFormPDF) Translate(source interface{}) (out []byte, er
 	return
 }
 
-func (self *TranslateFixedFormPDF) RenderPage(c *creator.Creator, pageObj model.FixedFormPage) (err error) {
-	if self.Debug {
+func (t *TranslateFixedFormPDF) RenderPage(c *creator.Creator, pageObj model.FixedFormPage) (err error) {
+	if t.Debug {
 		log.Printf("RenderPage()")
 	}
 	if pageObj.Format.Pdf.Template != "" {
-		f, err := os.Open(self.TemplatePath + string(os.PathSeparator) + pageObj.Format.Pdf.Template + ".pdf")
+		f, err := os.Open(t.TemplatePath + string(os.PathSeparator) + pageObj.Format.Pdf.Template + ".pdf")
 		if err != nil {
 			return err
 		}
@@ -97,8 +98,8 @@ func (self *TranslateFixedFormPDF) RenderPage(c *creator.Creator, pageObj model.
 		c.NewPage()
 	}
 
-	for iter, _ := range pageObj.Elements {
-		err = self.RenderElement(c, pageObj, pageObj.Elements[iter])
+	for iter := range pageObj.Elements {
+		err = t.RenderElement(c, pageObj, pageObj.Elements[iter])
 		if err != nil {
 			return err
 		}
@@ -107,10 +108,10 @@ func (self *TranslateFixedFormPDF) RenderPage(c *creator.Creator, pageObj model.
 	return nil
 }
 
-func (self *TranslateFixedFormPDF) RenderElement(c *creator.Creator, pageObj model.FixedFormPage, element model.FixedElement) (err error) {
+func (t *TranslateFixedFormPDF) RenderElement(c *creator.Creator, pageObj model.FixedFormPage, element model.FixedElement) (err error) {
 	st := time.Now()
 
-	if self.Debug {
+	if t.Debug {
 		log.Printf("RenderElement(%#v)", element)
 	}
 
@@ -119,13 +120,16 @@ func (self *TranslateFixedFormPDF) RenderElement(c *creator.Creator, pageObj mod
 		return nil
 	}
 	if element.PeriodStripPdf {
-		// TODO: FIXME: IMPLEMENT
+		content = strings.ReplaceAll(content, ".", " ")
 	}
 
-	// TODO: FIXME: pad or cut if necessary
+	// Cut if necessary to avoid overruns
+	if len(content) > element.Length {
+		content = content[0:element.Length]
+	}
 
 	p := creator.NewParagraph(content)
-	if self.Benchmark {
+	if t.Benchmark {
 		log.Printf("-- RenderElement(): NewParagraph: %s", time.Now().Sub(st).String())
 	}
 
@@ -134,25 +138,25 @@ func (self *TranslateFixedFormPDF) RenderElement(c *creator.Creator, pageObj mod
 	// Row / Y
 	yPos := float64((float64(element.Row) * pageObj.Format.Pdf.Scaling.Vertical) + pageObj.Format.Pdf.Offset.Vertical)
 
-	font_st := time.Now()
+	fontSt := time.Now()
 
 	p.SetFont(fonts.NewFontCourier())
 	p.SetFontSize(pageObj.Format.Pdf.Font.Size)
 	p.SetPos(xPos, yPos)
 
-	if self.Benchmark {
-		log.Printf("-- RenderElement(): SetFont/Pos: %s", time.Now().Sub(font_st).String())
+	if t.Benchmark {
+		log.Printf("-- RenderElement(): SetFont/Pos: %s", time.Now().Sub(fontSt).String())
 	}
 	// Push to current page
-	draw_st := time.Now()
+	drawSt := time.Now()
 	err = c.Draw(p)
-	if self.Benchmark {
-		log.Printf("-- RenderElement(): Draw: %s", time.Now().Sub(draw_st).String())
+	if t.Benchmark {
+		log.Printf("-- RenderElement(): Draw: %s", time.Now().Sub(drawSt).String())
 	}
 	return err
 }
 
-func (self *TranslateFixedFormPDF) RightPad(text string, length int) string {
+func (t *TranslateFixedFormPDF) RightPad(text string, length int) string {
 	x := text
 	for iter := 0; iter < length-len(text); iter++ {
 		x += " "
@@ -160,7 +164,7 @@ func (self *TranslateFixedFormPDF) RightPad(text string, length int) string {
 	return x
 }
 
-func (self *TranslateFixedFormPDF) LeftZeroPad(text string, length int) string {
+func (t *TranslateFixedFormPDF) LeftZeroPad(text string, length int) string {
 	x := text
 	for iter := 0; iter < length-len(text); iter++ {
 		x = "0" + x

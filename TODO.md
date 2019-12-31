@@ -10,10 +10,10 @@ This "TODO" list covers migration from the 0.5.x J2EE backend for implementation
 - [ ] changePassword
 - [ ] getBulkStatus
 - [x] getConfigValues
-- [ ] getCurrentUsername
+- [x] getCurrentUsername
 - [ ] getEligibility
-- [ ] getFile
-- [ ] getFileList
+- [x] getFile
+- [x] getFileList
 - [ ] getOutputMonths
 - [ ] getOutputYears
 - [x] getPlugins

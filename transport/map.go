@@ -1,4 +1,4 @@
-package transmission
+package transport
 
 import (
 	"errors"
@@ -6,23 +6,23 @@ import (
 )
 
 var (
-	transmitterRegistry     = map[string]func() Transmitter{}
-	transmitterRegistryLock = new(sync.Mutex)
+	transporterRegistry     = map[string]func() Transporter{}
+	transporterRegistryLock = new(sync.Mutex)
 )
 
-// RegisterTranslator adds a new Transmitter instance to the registry
-func RegisterTransmitter(name string, m func() Transmitter) {
-	transmitterRegistryLock.Lock()
-	defer transmitterRegistryLock.Unlock()
-	transmitterRegistry[name] = m
+// RegisterTransporter adds a new Transporter instance to the registry
+func RegisterTransporter(name string, m func() Transporter) {
+	transporterRegistryLock.Lock()
+	defer transporterRegistryLock.Unlock()
+	transporterRegistry[name] = m
 }
 
-// InstantiateTransmitter instantiates a Transmitter by name
-func InstantiateTransmitter(name string) (m Transmitter, err error) {
-	var f func() Transmitter
+// InstantiateTransporter instantiates a Transporter by name
+func InstantiateTransporter(name string) (m Transporter, err error) {
+	var f func() Transporter
 	var found bool
-	if f, found = transmitterRegistry[name]; !found {
-		err = errors.New("unable to locate transmitter " + name)
+	if f, found = transporterRegistry[name]; !found {
+		err = errors.New("unable to locate transporter " + name)
 		return
 	}
 	m = f()

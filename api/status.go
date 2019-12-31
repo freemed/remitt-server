@@ -1,16 +1,18 @@
 package api
 
 import (
+	"fmt"
+	"log"
+	"net/http"
+
 	"github.com/freemed/remitt-server/common"
 	"github.com/freemed/remitt-server/model"
 	"github.com/gin-gonic/gin"
-	"log"
-	"net/http"
 )
 
 func init() {
 	common.ApiMap["status"] = func(r *gin.RouterGroup) {
-		r.POST("/:id", GetStatus)
+		r.POST("/:id", apiGetStatus)
 	}
 }
 
@@ -19,20 +21,23 @@ type getStatusResult struct {
 	Stage  string `db:"stage" json:"stage"`
 }
 
-func GetStatus(c *gin.Context) {
+func apiGetStatus(c *gin.Context) {
 	user := c.MustGet(gin.AuthUserKey).(string)
 
-	payloadId, err := common.ParamInt(c, "id")
+	payloadID, err := common.ParamInt(c, "id")
+
+	tag := fmt.Sprintf("apiGetStatus(%d) [%s]: ", payloadID, user)
+
 	if err != nil {
-		log.Print(err.Error())
+		log.Print(tag + err.Error())
 		c.AbortWithError(http.StatusBadRequest, err)
 		return
 	}
 
 	var obj getStatusResult
-	err = model.DbMap.SelectOne(&obj, "CALL p_Status( ?, ? );", user, payloadId)
+	err = model.DbMap.SelectOne(&obj, "CALL p_Status( ?, ? );", user, payloadID)
 	if err != nil {
-		log.Print(err.Error())
+		log.Print(tag + err.Error())
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}
