@@ -148,11 +148,11 @@ func (o *JobQueueItem) Render() (out []byte, err error) {
 	//defer os.Remove(outxml.Name())
 
 	xslfile := config.Config.Paths.BasePath + string(os.PathSeparator) + "resources" + string(os.PathSeparator) + "xsl" + string(os.PathSeparator) + o.RenderOption + ".xsl"
-	if config.Config.InternalXslt {
-		err = common.XslTransform(inxml.Name(), xslfile, outxml.Name(), map[string]string{})
-	} else {
-		err = common.XslTransformExternal(inxml.Name(), xslfile, outxml.Name(), map[string]string{})
-	}
+	//if config.Config.InternalXslt {
+	//	err = common.XslTransform(inxml.Name(), xslfile, outxml.Name(), map[string]string{})
+	//} else {
+	err = common.XslTransformExternal(inxml.Name(), xslfile, outxml.Name(), map[string]string{})
+	//}
 
 	// Bring data back in by reading again
 	outxml.Close()
@@ -300,11 +300,11 @@ func executeJob(w *JobQueueItem) error {
 	}
 	defer os.Remove(outxml.Name())
 	xslfile := config.Config.Paths.BasePath + string(os.PathSeparator) + "resources" + string(os.PathSeparator) + "xsl" + string(os.PathSeparator) + w.RenderOption + ".xsl"
-	if config.Config.InternalXslt {
-		err = common.XslTransform(inxml.Name(), xslfile, outxml.Name(), map[string]string{})
-	} else {
-		err = common.XslTransformExternal(inxml.Name(), xslfile, outxml.Name(), map[string]string{})
-	}
+	//if config.Config.InternalXslt {
+	//	err = common.XslTransform(inxml.Name(), xslfile, outxml.Name(), map[string]string{})
+	//} else {
+	err = common.XslTransformExternal(inxml.Name(), xslfile, outxml.Name(), map[string]string{})
+	//}
 	err = outxml.Close()
 	if err != nil {
 		w.Fail(err)
