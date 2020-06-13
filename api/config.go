@@ -14,7 +14,6 @@ func init() {
 	common.ApiMap["config"] = func(r *gin.RouterGroup) {
 		r.GET("/all", apiConfigGetAll)
 		r.POST("/set/:namespace/:option/:value", apiConfigSetValue)
-		//r.Get("/view", MessagesView)
 	}
 }
 
