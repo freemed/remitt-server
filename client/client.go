@@ -201,6 +201,29 @@ func (c *RemittClient) PayloadResubmit(id int64) (int64, error) {
 	return out, nil
 }
 
+// ProtocolVersion retrieves the current version of the REMITT protocol
+func (c *RemittClient) ProtocolVersion() (string, error) {
+	req, err := http.NewRequest("GET", c.URL+"/api/version/protocol", nil)
+	if err != nil {
+		return "", err
+	}
+	req.SetBasicAuth(c.Username, c.Password)
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	var out string
+	err = json.Unmarshal(body, &out)
+	if err != nil {
+		return "", err
+	}
+	return out, nil
+}
+
 func (c *RemittClient) objToReaderJSON(obj interface{}) io.Reader {
 	b, _ := json.Marshal(obj)
 	return bytes.NewBuffer(b)
