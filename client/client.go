@@ -42,7 +42,12 @@ func (c *RemittClient) init() error {
 
 // ConfigGetAll retrieves all user configurable variables
 func (c *RemittClient) ConfigGetAll() ([]model.UserConfigModel, error) {
-	resp, err := c.client.Get(c.URL + "/api/config/all")
+	req, err := http.NewRequest("GET", c.URL+"/api/config/all", nil)
+	if err != nil {
+		return []model.UserConfigModel{}, err
+	}
+	req.SetBasicAuth(c.Username, c.Password)
+	resp, err := c.client.Do(req)
 	if err != nil {
 		return []model.UserConfigModel{}, err
 	}
@@ -60,7 +65,12 @@ func (c *RemittClient) ConfigGetAll() ([]model.UserConfigModel, error) {
 
 // ConfigSet sets a value for a user configurable variable
 func (c *RemittClient) ConfigSet(namespace, key, value string) (bool, error) {
-	resp, err := c.client.Post(c.URL+fmt.Sprintf("/api/config/set/%s/%s/%s", namespace, key, value), "application/json", nil)
+	req, err := http.NewRequest("POST", c.URL+fmt.Sprintf("/api/config/set/%s/%s/%s", namespace, key, value), nil)
+	if err != nil {
+		return false, err
+	}
+	req.SetBasicAuth(c.Username, c.Password)
+	resp, err := c.client.Do(req)
 	if err != nil {
 		return false, err
 	}
@@ -78,7 +88,12 @@ func (c *RemittClient) ConfigSet(namespace, key, value string) (bool, error) {
 
 // CurrentUser retrieves the current user name
 func (c *RemittClient) CurrentUser() (string, error) {
-	resp, err := c.client.Get(c.URL + "/api/currentuser")
+	req, err := http.NewRequest("GET", c.URL+"/api/currentuser", nil)
+	if err != nil {
+		return "", err
+	}
+	req.SetBasicAuth(c.Username, c.Password)
+	resp, err := c.client.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -96,7 +111,12 @@ func (c *RemittClient) CurrentUser() (string, error) {
 
 // GetStatus retrieves the specified job status
 func (c *RemittClient) GetStatus(id int64) (JobStatus, error) {
-	resp, err := c.client.Get(c.URL + fmt.Sprintf("/api/status/%d", id))
+	req, err := http.NewRequest("GET", c.URL+fmt.Sprintf("/api/status/%d", id), nil)
+	if err != nil {
+		return JobStatus{}, err
+	}
+	req.SetBasicAuth(c.Username, c.Password)
+	resp, err := c.client.Do(req)
 	if err != nil {
 		return JobStatus{}, err
 	}
@@ -114,7 +134,12 @@ func (c *RemittClient) GetStatus(id int64) (JobStatus, error) {
 
 // GetPlugins retrieves a list of plugins for a specific category
 func (c *RemittClient) GetPlugins(category string) ([]string, error) {
-	resp, err := c.client.Get(c.URL + fmt.Sprintf("/api/plugins/%s", category))
+	req, err := http.NewRequest("GET", c.URL+fmt.Sprintf("/api/plugins/%s", category), nil)
+	if err != nil {
+		return []string{}, err
+	}
+	req.SetBasicAuth(c.Username, c.Password)
+	resp, err := c.client.Do(req)
 	if err != nil {
 		return []string{}, err
 	}
@@ -132,7 +157,12 @@ func (c *RemittClient) GetPlugins(category string) ([]string, error) {
 
 // PayloadInsert inserts a new payload of data for processing
 func (c *RemittClient) PayloadInsert(payload InputPayload) (int64, error) {
-	resp, err := c.client.Post(c.URL+"/api/payload/", "application/json", c.objToReaderJSON(payload))
+	req, err := http.NewRequest("POST", c.URL+"/api/payload/", c.objToReaderJSON(payload))
+	if err != nil {
+		return 0, err
+	}
+	req.SetBasicAuth(c.Username, c.Password)
+	resp, err := c.client.Do(req)
 	if err != nil {
 		return 0, err
 	}
@@ -150,7 +180,12 @@ func (c *RemittClient) PayloadInsert(payload InputPayload) (int64, error) {
 
 // PayloadResubmit resubmits an already existing REMITT payload for processing
 func (c *RemittClient) PayloadResubmit(id int64) (int64, error) {
-	resp, err := c.client.Get(c.URL + fmt.Sprintf("/api/payload/resubmit/%d", id))
+	req, err := http.NewRequest("GET", c.URL+fmt.Sprintf("/api/payload/resubmit/%d", id), nil)
+	if err != nil {
+		return 0, err
+	}
+	req.SetBasicAuth(c.Username, c.Password)
+	resp, err := c.client.Do(req)
 	if err != nil {
 		return 0, err
 	}
