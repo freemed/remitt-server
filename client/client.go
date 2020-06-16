@@ -40,6 +40,34 @@ func (c *RemittClient) init() error {
 	return nil
 }
 
+// Ping is a simple command to determine if the API is functional
+func (c *RemittClient) Ping() (bool, time.Duration, error) {
+	var pingText = "PING"
+	startTime := time.Now()
+	req, err := http.NewRequest("GET", fmt.Sprintf(c.URL+"/api/ping/%s", pingText), nil)
+	if err != nil {
+		return false, time.Now().Sub(startTime), err
+	}
+	req.SetBasicAuth(c.Username, c.Password)
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return false, time.Now().Sub(startTime), err
+	}
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return false, time.Now().Sub(startTime), err
+	}
+	var out string
+	err = json.Unmarshal(body, &out)
+	if err != nil {
+		return false, time.Now().Sub(startTime), err
+	}
+	if out != pingText {
+		return false, time.Now().Sub(startTime), fmt.Errorf("%s != %s", out, pingText)
+	}
+	return true, time.Now().Sub(startTime), nil
+}
+
 // ConfigGetAll retrieves all user configurable variables
 func (c *RemittClient) ConfigGetAll() ([]model.UserConfigModel, error) {
 	req, err := http.NewRequest("GET", c.URL+"/api/config/all", nil)
