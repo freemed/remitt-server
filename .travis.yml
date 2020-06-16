@@ -1,6 +1,5 @@
 language: go
 go:
-  - 1.9
   - tip
 script:
   - go get -d -v
