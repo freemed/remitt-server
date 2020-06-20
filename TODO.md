@@ -7,18 +7,18 @@ This "TODO" list covers migration from the 0.5.x J2EE backend for implementation
 - [ ] addKeyToKeyring
 - [ ] addRemittUser
 - [ ] batchEligibilityCheck
-- [ ] changePassword
-- [ ] getBulkStatus
+- [X] changePassword
+- [X] getBulkStatus
 - [x] getConfigValues
 - [x] getCurrentUsername
 - [ ] getEligibility
 - [x] getFile
 - [x] getFileList
-- [ ] getOutputMonths
-- [ ] getOutputYears
+- [X] getOutputMonths
+- [X] getOutputYears
 - [x] getPlugins
 - [ ] getPluginOptions
-- [ ] getProtocolVersion
+- [X] getProtocolVersion
 - [x] getStatus
 - [x] insertPayload
 - [ ] listRemittUsers
@@ -67,5 +67,5 @@ This "TODO" list covers migration from the 0.5.x J2EE backend for implementation
   - [ ] StoreFilePdf
 - [ ] Validation plugins
   - [ ] X12 validation
-- [ ] XSLT processing
+- [X] XSLT processing
 
