@@ -18,7 +18,7 @@ type TranslateX12Xml struct {
 }
 
 func (self *TranslateX12Xml) Resolver(in string, out string) bool {
-	return (in == "x12xml" && out == "x12")
+	return (in == "x12xml" && out == "x12") || (in == "x12xml" && out == "*")
 }
 
 func (self *TranslateX12Xml) Translate(source interface{}) (out []byte, err error) {

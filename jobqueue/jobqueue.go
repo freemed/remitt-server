@@ -345,8 +345,29 @@ func executeJob(w *JobQueueItem) error {
 		return err
 	}
 
+	var ext string
+	switch transportPlugin.InputFormat() {
+	case "txt":
+		ext = "txt"
+		break
+	case "text":
+		ext = "txt"
+		break
+	case "x12":
+		ext = "x12"
+		break
+	case "pdf":
+		ext = "pdf"
+		break
+	default:
+		ext = "txt"
+		break
+	}
+	fn := fmt.Sprintf("%d.%s", time.Now().UnixNano(), ext)
+	log.Printf(tag+"Using filename %s", fn)
+
 	// Transmission
-	err = transportPlugin.Transport(translatedData)
+	err = transportPlugin.Transport(fn, translatedData)
 	if err != nil {
 		w.Fail(err)
 		return err

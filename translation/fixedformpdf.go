@@ -28,7 +28,7 @@ type TranslateFixedFormPDF struct {
 }
 
 func (t *TranslateFixedFormPDF) Resolver(in string, out string) bool {
-	return (in == "fixedformxml" && out == "pdf")
+	return (in == "fixedformxml" && out == "pdf") || (in == "fixedformxml" && out == "*")
 }
 
 func (t *TranslateFixedFormPDF) Translate(source interface{}) (out []byte, err error) {
@@ -41,6 +41,7 @@ func (t *TranslateFixedFormPDF) Translate(source interface{}) (out []byte, err e
 	src, ok := source.(model.FixedFormXml)
 	if !ok {
 		err = errors.New("invalid datatype presented")
+		return
 	}
 
 	if t.Benchmark {
