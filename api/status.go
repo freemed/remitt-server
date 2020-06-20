@@ -12,7 +12,8 @@ import (
 
 func init() {
 	common.ApiMap["status"] = func(r *gin.RouterGroup) {
-		r.POST("/:id", apiGetStatus)
+		r.GET("/:id", apiGetStatus)
+		r.POST("/bulk/", apiGetBulkStatus)
 	}
 }
 
@@ -42,4 +43,30 @@ func apiGetStatus(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, obj)
+}
+
+func apiGetBulkStatus(c *gin.Context) {
+	user := c.MustGet(gin.AuthUserKey).(string)
+
+	tag := fmt.Sprintf("apiGetBulkStatus() [%s]: ", user)
+
+	var ids []int64
+	err := c.BindJSON(&ids)
+	if err != nil {
+		log.Print(tag + err.Error())
+		c.AbortWithError(http.StatusBadRequest, err)
+		return
+	}
+
+	out := map[int64]getStatusResult{}
+	for _, id := range ids {
+		var obj getStatusResult
+		err = model.DbMap.SelectOne(&obj, "CALL p_Status( ?, ? );", user, id)
+		if err != nil {
+			log.Print(tag + err.Error())
+			continue
+		}
+		out[id] = obj
+	}
+	c.JSON(http.StatusOK, out)
 }
