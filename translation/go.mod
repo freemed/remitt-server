@@ -1,4 +1,4 @@
-module github.com/freemed/remitt-server/client
+module github.com/freemed/remitt-server/translation
 
 go 1.15
 
@@ -10,6 +10,6 @@ replace (
 
 require (
 	github.com/freemed/remitt-server/model v0.0.0-00010101000000-000000000000
-	github.com/lib/pq v1.7.0 // indirect
-	gopkg.in/yaml.v2 v2.3.0 // indirect
+	github.com/orcaman/writerseeker v0.0.0-20200621085525-1d3f536ff85e
+	github.com/unidoc/unidoc v2.2.0+incompatible
 )
