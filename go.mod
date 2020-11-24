@@ -16,10 +16,6 @@ replace (
 
 require (
 	github.com/braintree/manners v0.0.0-20160418043613-82a8879fc5fd
-	github.com/docker/distribution v2.7.1+incompatible // indirect
-	github.com/docker/docker v1.13.1 // indirect
-	github.com/docker/go-connections v0.4.0 // indirect
-	github.com/docker/go-units v0.4.0 // indirect
 	github.com/freemed/remitt-server/api v0.0.0-00010101000000-000000000000
 	github.com/freemed/remitt-server/common v0.0.0-00010101000000-000000000000
 	github.com/freemed/remitt-server/config v0.0.0-00010101000000-000000000000
@@ -31,7 +27,4 @@ require (
 	github.com/mattn/go-sqlite3 v2.0.3+incompatible // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.1 // indirect
-	github.com/opencontainers/go-digest v1.0.0 // indirect
-	github.com/phpdave11/gofpdf v1.4.2 // indirect
-	github.com/ziutek/mymysql v1.5.4 // indirect
 )
