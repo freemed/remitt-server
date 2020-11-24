@@ -20,6 +20,7 @@ Uses:
  * [gokogiri](https://github.com/freemed/gokogiri): Native XML processing support
  * [ratago](https://github.com/freemed/ratago): Native XSLT support
  * [manners](https://github.com/braintree/manners): Graceful http/https serving
+ * [gofpdf](https://github.com/phpdave11/gofpdf): FPDF translation into Go
 
 Code in this repository can be run against a valid REMITT 0.5.x series database with no modifications.
 

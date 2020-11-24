@@ -3,6 +3,7 @@ package translation
 import (
 	"bytes"
 	"errors"
+	"io"
 	"strings"
 
 	//"fmt"
@@ -12,9 +13,8 @@ import (
 
 	"github.com/freemed/remitt-server/model"
 	"github.com/orcaman/writerseeker"
-	"github.com/unidoc/unidoc/pdf/creator"
-	pdf "github.com/unidoc/unidoc/pdf/model"
-	"github.com/unidoc/unidoc/pdf/model/fonts"
+	"github.com/phpdave11/gofpdf"
+	"github.com/phpdave11/gofpdf/contrib/gofpdi"
 )
 
 func init() {
@@ -48,8 +48,8 @@ func (t *TranslateFixedFormPDF) Translate(source interface{}) (out []byte, err e
 		log.Printf("Conversion : %s", time.Now().Sub(st).String())
 	}
 
-	// Create new PDF factory with unidoc
-	c := creator.New()
+	// Create new PDF factory
+	c := gofpdf.New(gofpdf.OrientationPortrait, "pt", "Letter", "courier")
 	for iter := range src.Pages {
 		err = t.RenderPage(c, src.Pages[iter])
 		if err != nil {
@@ -60,7 +60,7 @@ func (t *TranslateFixedFormPDF) Translate(source interface{}) (out []byte, err e
 		}
 	}
 	writerSeeker := &writerseeker.WriterSeeker{}
-	err = c.Write(writerSeeker)
+	err = c.OutputAndClose(writerSeeker)
 	if err == nil {
 		reader := writerSeeker.Reader()
 		buf := new(bytes.Buffer)
@@ -70,10 +70,15 @@ func (t *TranslateFixedFormPDF) Translate(source interface{}) (out []byte, err e
 	return
 }
 
-func (t *TranslateFixedFormPDF) RenderPage(c *creator.Creator, pageObj model.FixedFormPage) (err error) {
+func (t *TranslateFixedFormPDF) RenderPage(c *gofpdf.Fpdf, pageObj model.FixedFormPage) (err error) {
 	if t.Debug {
 		log.Printf("RenderPage()")
 	}
+
+	// Start by creating a new page
+	c.AddPage()
+	w, h := c.GetPageSize()
+
 	if pageObj.Format.Pdf.Template != "" {
 		f, err := os.Open(t.TemplatePath + string(os.PathSeparator) + pageObj.Format.Pdf.Template + ".pdf")
 		if err != nil {
@@ -81,22 +86,13 @@ func (t *TranslateFixedFormPDF) RenderPage(c *creator.Creator, pageObj model.Fix
 		}
 		defer f.Close()
 
-		pdfReader, err := pdf.NewPdfReader(f)
-		if err != nil {
-			return err
-		}
+		// Import in-memory PDF stream with gofpdi free pdf document importer
+		pdfReader := gofpdi.NewImporter()
+		rs := io.ReadSeeker(f)
+		templatePage := pdfReader.ImportPageFromStream(c, &rs, pageObj.Format.Pdf.Page, "/MediaBox")
 
-		templatePage, err := pdfReader.GetPage(pageObj.Format.Pdf.Page)
-		if err != nil {
-			return err
-		}
-
-		err = c.AddPage(templatePage)
-		if err != nil {
-			return err
-		}
-	} else {
-		c.NewPage()
+		// Import/add page
+		pdfReader.UseImportedTemplate(c, templatePage, 0, 0, w, h)
 	}
 
 	for iter := range pageObj.Elements {
@@ -109,7 +105,7 @@ func (t *TranslateFixedFormPDF) RenderPage(c *creator.Creator, pageObj model.Fix
 	return nil
 }
 
-func (t *TranslateFixedFormPDF) RenderElement(c *creator.Creator, pageObj model.FixedFormPage, element model.FixedElement) (err error) {
+func (t *TranslateFixedFormPDF) RenderElement(c *gofpdf.Fpdf, pageObj model.FixedFormPage, element model.FixedElement) (err error) {
 	st := time.Now()
 
 	if t.Debug {
@@ -129,7 +125,6 @@ func (t *TranslateFixedFormPDF) RenderElement(c *creator.Creator, pageObj model.
 		content = content[0:element.Length]
 	}
 
-	p := creator.NewParagraph(content)
 	if t.Benchmark {
 		log.Printf("-- RenderElement(): NewParagraph: %s", time.Now().Sub(st).String())
 	}
@@ -141,18 +136,18 @@ func (t *TranslateFixedFormPDF) RenderElement(c *creator.Creator, pageObj model.
 
 	fontSt := time.Now()
 
-	p.SetFont(fonts.NewFontCourier())
-	p.SetFontSize(pageObj.Format.Pdf.Font.Size)
-	p.SetPos(xPos, yPos)
+	//p.SetFont(fonts.NewFontCourier())
+	c.SetFont("Courier", "", pageObj.Format.Pdf.Font.Size)
+	c.Text(xPos, yPos, content)
 
 	if t.Benchmark {
 		log.Printf("-- RenderElement(): SetFont/Pos: %s", time.Now().Sub(fontSt).String())
 	}
 	// Push to current page
 	drawSt := time.Now()
-	err = c.Draw(p)
+	c.Cell(xPos, yPos, content)
 	if t.Benchmark {
-		log.Printf("-- RenderElement(): Draw: %s", time.Now().Sub(drawSt).String())
+		log.Printf("-- RenderElement(): Cell: %s", time.Now().Sub(drawSt).String())
 	}
 	return err
 }
