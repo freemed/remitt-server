@@ -36,7 +36,7 @@ func apiConfigSetValue(c *gin.Context) {
 	option := c.Param("option")
 	value := c.Param("value")
 
-	tag := fmt.Sprintf("ConfigGetAll(%s,%s,%s) [%s]: ", namespace, option, value, user)
+	tag := fmt.Sprintf("ConfigSetValue(%s,%s,%s) [%s]: ", namespace, option, value, user)
 
 	err := model.SetConfigValue(user, namespace, option, []byte(value))
 	if err != nil {
