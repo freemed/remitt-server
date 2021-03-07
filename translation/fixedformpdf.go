@@ -50,9 +50,16 @@ func (t *TranslateFixedFormPDF) Translate(source interface{}) (out []byte, err e
 
 	// Create new PDF factory
 	c := gofpdf.New(gofpdf.OrientationPortrait, "pt", "Letter", "courier")
+
+	// Turn off auto page breaking, otherwise we will constantly be
+	// interpolating additional page breaks in, creating mostly
+	// blank pages.
+	c.SetAutoPageBreak(false, 0)
+
 	for iter := range src.Pages {
 		err = t.RenderPage(c, src.Pages[iter])
 		if err != nil {
+			log.Printf("Translate(): %s", err.Error())
 			return
 		}
 		if t.Benchmark {
@@ -78,6 +85,7 @@ func (t *TranslateFixedFormPDF) RenderPage(c *gofpdf.Fpdf, pageObj model.FixedFo
 	// Start by creating a new page
 	c.AddPage()
 	w, h := c.GetPageSize()
+	log.Printf("TranslateFixedFormPDF.RenderPage(): w = %f, h = %f", w, h)
 
 	if pageObj.Format.Pdf.Template != "" {
 		f, err := os.Open(t.TemplatePath + string(os.PathSeparator) + pageObj.Format.Pdf.Template + ".pdf")
@@ -98,6 +106,7 @@ func (t *TranslateFixedFormPDF) RenderPage(c *gofpdf.Fpdf, pageObj model.FixedFo
 	for iter := range pageObj.Elements {
 		err = t.RenderElement(c, pageObj, pageObj.Elements[iter])
 		if err != nil {
+			log.Printf("TranslateFixedFormPDF.RenderPage(): ERR: %s", err.Error())
 			return err
 		}
 	}
@@ -139,6 +148,7 @@ func (t *TranslateFixedFormPDF) RenderElement(c *gofpdf.Fpdf, pageObj model.Fixe
 	//p.SetFont(fonts.NewFontCourier())
 	c.SetFont("Courier", "", pageObj.Format.Pdf.Font.Size)
 	c.Text(xPos, yPos, content)
+	log.Printf("RenderElement(): xPos: %f, yPos: %f, content: '%s'", xPos, yPos, content)
 
 	if t.Benchmark {
 		log.Printf("-- RenderElement(): SetFont/Pos: %s", time.Now().Sub(fontSt).String())
@@ -149,7 +159,7 @@ func (t *TranslateFixedFormPDF) RenderElement(c *gofpdf.Fpdf, pageObj model.Fixe
 	if t.Benchmark {
 		log.Printf("-- RenderElement(): Cell: %s", time.Now().Sub(drawSt).String())
 	}
-	return err
+	return
 }
 
 func (t *TranslateFixedFormPDF) RightPad(text string, length int) string {
