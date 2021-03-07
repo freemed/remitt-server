@@ -267,8 +267,8 @@
 				<pagelength>66</pagelength>
 				<pdf template="cms1500" page="1">
 					<font name="Courier" size="10" />
-					<scaling vertical="12" horizontal="7.2" />
-					<offset vertical="12" horizontal="24" />
+					<scaling vertical="11.9" horizontal="7.2"/>
+					<offset vertical="25" horizontal="24"/>
 				</pdf>
 			</format>
 	
