@@ -1,6 +1,6 @@
 module github.com/freemed/remitt-server/model
 
-go 1.15
+go 1.16
 
 replace (
 	github.com/freemed/remitt-server => ../
@@ -14,6 +14,8 @@ require (
 	github.com/docker/docker v1.13.1 // indirect
 	github.com/docker/go-connections v0.4.0 // indirect
 	github.com/docker/go-units v0.4.0 // indirect
+	github.com/freemed/remitt-server/common v0.0.0-00010101000000-000000000000
+	github.com/freemed/remitt-server/config v0.0.0-00010101000000-000000000000
 	github.com/go-gorp/gorp v2.2.0+incompatible
 	github.com/go-sql-driver/mysql v1.5.0
 	github.com/lib/pq v1.8.0 // indirect

@@ -1,9 +1,8 @@
 module github.com/freemed/remitt-server/common
 
-go 1.15
+go 1.16
 
 replace (
-	github.com/freemed/remitt-server => ../
 	github.com/freemed/remitt-server/common => ../common
 	github.com/freemed/remitt-server/config => ../config
 )
