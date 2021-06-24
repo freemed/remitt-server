@@ -9,6 +9,7 @@ replace (
 )
 
 require (
-	github.com/pkg/sftp v1.12.0
-	golang.org/x/crypto v0.0.0-20201117144127-c1f2f97bffc9
+	github.com/pkg/sftp v1.13.1
+	golang.org/x/crypto v0.0.0-20210616213533-5ff15b29337e
+	golang.org/x/sys v0.0.0-20210616094352-59db8d763f22 // indirect
 )

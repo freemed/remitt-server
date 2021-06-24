@@ -22,6 +22,7 @@ require (
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/orcaman/writerseeker v0.0.0-20200621085525-1d3f536ff85e
 	github.com/phpdave11/gofpdf v1.4.2
+	github.com/phpdave11/gofpdi v1.0.13 // indirect
 	github.com/poy/onpar v1.0.1 // indirect
 	github.com/ziutek/mymysql v1.5.4 // indirect
 )
