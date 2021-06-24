@@ -62,7 +62,7 @@ func XslTransformExternal(inxml, xslfile, outxml string, vars map[string]string)
 
 	log.Printf("XslTransformExternal(): " + strings.Join(args, " "))
 
-	_, err := RunWithTimeout(args, 5)
+	_, err := RunWithTimeout(args, 30)
 	if err != nil {
 		return err
 	}
