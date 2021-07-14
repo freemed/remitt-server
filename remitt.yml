@@ -10,6 +10,7 @@ paths:
   db-migrations: migrations
   xsltproc: /usr/bin/xsltproc
   ssh: /usr/bin/ssh
+  temp: /tmp
 timing-iterations:
   worker-threads: 16
 internal-xslt: true

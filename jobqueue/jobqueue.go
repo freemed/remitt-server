@@ -128,7 +128,7 @@ func (o *JobQueueItem) Fail(err error) {
 
 func (o *JobQueueItem) Render() (out []byte, err error) {
 	// Create temporary
-	inxml, err := ioutil.TempFile("/tmp", "render-in")
+	inxml, err := ioutil.TempFile(config.Config.Paths.TemporaryPath, "render-in")
 	if err != nil {
 		log.Printf("Render(): %s", err.Error())
 		return
@@ -140,7 +140,7 @@ func (o *JobQueueItem) Render() (out []byte, err error) {
 		return
 	}
 
-	outxml, err := ioutil.TempFile("/tmp", "render-out")
+	outxml, err := ioutil.TempFile(config.Config.Paths.TemporaryPath, "render-out")
 	if err != nil {
 		log.Printf("Render(): %s", err.Error())
 		return
@@ -287,13 +287,13 @@ func executeJob(w *JobQueueItem) error {
 	tag := fmt.Sprintf("executeJob(%d): ", w.ID)
 
 	// Render
-	inxml, err := ioutil.TempFile("/tmp", "render-in")
+	inxml, err := ioutil.TempFile(config.Config.Paths.TemporaryPath, "render-in")
 	if err != nil {
 		log.Printf(tag+"%s", err.Error())
 		return err
 	}
 	defer os.Remove(inxml.Name())
-	outxml, err := ioutil.TempFile("/tmp", "render-out")
+	outxml, err := ioutil.TempFile(config.Config.Paths.TemporaryPath, "render-out")
 	if err != nil {
 		log.Printf("executeJob(): %s", err.Error())
 		return err
