@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/braintree/manners"
@@ -45,6 +46,11 @@ func main() {
 
 	log.Print("Initializing database backend")
 	model.DbMap = model.InitDb()
+
+	if config.Config.Paths.TemporaryPath != "/tmp" {
+		log.Print("Ensuring temporary directory exists")
+		os.MkdirAll(config.Config.Paths.TemporaryPath, 0700)
+	}
 
 	log.Printf("Initializing worker threads")
 	jobqueue.StartDispatcher(config.Config.TimingIterations.NumWorkerThreads)
