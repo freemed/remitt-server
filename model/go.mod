@@ -3,7 +3,6 @@ module github.com/freemed/remitt-server/model
 go 1.16
 
 replace (
-	github.com/freemed/remitt-server => ../
 	github.com/freemed/remitt-server/common => ../common
 	github.com/freemed/remitt-server/config => ../config
 )
@@ -24,7 +23,6 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.5 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/poy/onpar v1.0.1 // indirect
-	github.com/stretchr/testify v1.6.1 // indirect
 	github.com/ziutek/mymysql v1.5.4 // indirect
 	golang.org/x/crypto v0.0.0-20210711020723-a769d52b0f97 // indirect
 	golang.org/x/sys v0.0.0-20210630005230-0f9fa26af87c // indirect

@@ -38,7 +38,7 @@ This "TODO" list covers migration from the 0.5.x J2EE backend for implementation
   - [ ] Gateway EDI
   - [ ] NC Medicaid
   - [ ] SFTP
-- [ ] Job queuing mechanism
+- [X] Job queuing mechanism
 - [ ] Migrate queue polling logic to go channel logic
 - [ ] Parsing X12
 - [ ] PGP/GPG armoring for payloads
@@ -52,14 +52,14 @@ This "TODO" list covers migration from the 0.5.x J2EE backend for implementation
   - [ ] Eligibility task
   - [ ] Scooper task
 - [ ] Translation plugins
-  - [ ] Import PDF overlay logic from [go fpdf port](https://github.com/jung-kurt/gofpdf)
-  - [ ] FixedFormPdf
+  - [X] Import PDF overlay logic from [go fpdf port](https://github.com/jung-kurt/gofpdf)
+  - [X] FixedFormPdf
   - [ ] FixedFormXml
   - [ ] X12Passthrough
-  - [ ] X12Xml
+  - [X] X12Xml
 - [ ] Transport plugins
-  - [ ] Javascript scripting with [otto](https://github.com/robertkrimen/otto) for scripting
-  - [ ] SFTP support with [sftp](https://github.com/pkg/sftp)
+  - [X] Javascript scripting with [otto](https://github.com/robertkrimen/otto) for scripting
+  - [X] SFTP support with [sftp](https://github.com/pkg/sftp)
   - [ ] Web-scraping / automation with [goquery](https://github.com/PuerkitoBio/goquery)
   - [ ] ClaimLogic
   - [ ] Gateway EDI

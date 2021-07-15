@@ -27,6 +27,12 @@ type AppConfig struct {
 		SshPath          string `yaml:"ssh"`
 		TemporaryPath    string `yaml:"temp"`
 	} `yaml:"paths"`
+	Mail struct {
+		Server      string `yaml:"server"`
+		Port        int    `yaml:"port"`
+		TLS         bool   `yaml:"tls"`
+		FromAddress string `yaml:"from"`
+	} `yaml:"mail"`
 	TimingIterations struct {
 		NumWorkerThreads int `yaml:"worker-threads"`
 	} `yaml:"timing-iterations"`
