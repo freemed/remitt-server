@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -20,6 +21,7 @@ type Sftp struct {
 	password string
 	keydata  string
 	path     string
+	ctx      context.Context
 }
 
 // Transport performs the actual work of transport, given the input.
@@ -91,6 +93,12 @@ func (s *Sftp) SetOptions(o map[string]interface{}) error {
 	s.port, _ = s.coerceOptionInt(o, "sftpPort")
 	s.path, _ = s.coerceOptionString(o, "sftpPath")
 
+	return nil
+}
+
+// SetContext sets the context in which this executes
+func (s *Sftp) SetContext(c context.Context) error {
+	s.ctx = c
 	return nil
 }
 

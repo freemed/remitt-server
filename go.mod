@@ -9,6 +9,7 @@ replace (
 	github.com/freemed/remitt-server/config => ./config
 	github.com/freemed/remitt-server/jobqueue => ./jobqueue
 	github.com/freemed/remitt-server/model => ./model
+	github.com/freemed/remitt-server/model/user => ./model/user
 	github.com/freemed/remitt-server/translation => ./translation
 	github.com/freemed/remitt-server/transport => ./transport
 )

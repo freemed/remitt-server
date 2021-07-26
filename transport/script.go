@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/freemed/remitt-server/model"
+	"github.com/freemed/remitt-server/model/user"
 	"github.com/robertkrimen/otto"
 	_ "github.com/robertkrimen/otto/underscore"
 )
@@ -98,13 +99,31 @@ func (obj *Interpreter) RunUnsafe(code string, timeout int) (e error) {
 }
 
 type Script struct {
-	script string
+	script  string
+	timeout int
+	ctx     context.Context
 }
 
 // Transport performs the actual work of transport, given the input.
 func (s *Script) Transport(filename string, data interface{}) error {
 	// TODO: FIXME: IMPLEMENT: XXX
-	return nil
+
+	// Retrieve user from context
+	um, ok := user.FromContext(s.ctx)
+	if !ok {
+		return fmt.Errorf("unable to retrieve user from context")
+	}
+
+	// Load script from string
+	js := NewInterpreter(*um)
+
+	// Prepopulate all of the input data
+	js.Initialize()
+
+	// Run the script
+	err := js.RunUnsafe(s.script, s.timeout)
+
+	return err
 }
 
 // InputFormat returns the input format required by this plugin.
@@ -114,12 +133,18 @@ func (s *Script) InputFormat() string {
 
 // Options returns a list of valid options for this transporter type
 func (s *Script) Options() []string {
-	return []string{"script"}
+	return []string{"script", "timeout"}
+}
+
+func (s *Script) SetContext(c context.Context) error {
+	s.ctx = c
+	return nil
 }
 
 // SetOptions sets the current options for this plugin
 func (s *Script) SetOptions(o map[string]interface{}) error {
 	s.script, _ = s.coerceOptionString(o, "script")
+	s.timeout, _ = s.coerceOptionInt(o, "timeout")
 
 	return nil
 }

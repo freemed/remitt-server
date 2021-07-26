@@ -1,5 +1,7 @@
 package transport
 
+import "context"
+
 // Transporter is the interface for transport plugins
 type Transporter interface {
 	// Transport performs the actual work of transport, given the input.
@@ -13,4 +15,7 @@ type Transporter interface {
 
 	// SetOptions sets the current options for this plugin
 	SetOptions(map[string]interface{}) error
+
+	// SetContext sets the context
+	SetContext(context.Context) error
 }
