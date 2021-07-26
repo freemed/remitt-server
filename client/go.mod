@@ -3,7 +3,6 @@ module github.com/freemed/remitt-server/client
 go 1.16
 
 replace (
-	github.com/freemed/remitt-server => ../
 	github.com/freemed/remitt-server/common => ../common
 	github.com/freemed/remitt-server/config => ../config
 	github.com/freemed/remitt-server/model => ../model
