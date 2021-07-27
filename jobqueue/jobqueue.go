@@ -348,6 +348,8 @@ func executeJob(w *JobQueueItem) error {
 		w.Fail(err)
 		return err
 	}
+	// Pass context to translation plugin
+	translationPlugin.SetContext(ctx)
 
 	// Translation
 	translatedData, err := translationPlugin.Translate(renderedData)

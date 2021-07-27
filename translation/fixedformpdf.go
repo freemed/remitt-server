@@ -2,6 +2,7 @@ package translation
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"strings"
@@ -25,6 +26,7 @@ type TranslateFixedFormPDF struct {
 	TemplatePath string
 	Debug        bool
 	Benchmark    bool
+	ctx          context.Context
 }
 
 func (t *TranslateFixedFormPDF) Resolver(in string, out string) bool {
@@ -75,6 +77,11 @@ func (t *TranslateFixedFormPDF) Translate(source interface{}) (out []byte, err e
 		out = buf.Bytes()
 	}
 	return
+}
+
+func (self *TranslateFixedFormPDF) SetContext(ctx context.Context) error {
+	self.ctx = ctx
+	return nil
 }
 
 func (t *TranslateFixedFormPDF) RenderPage(c *gofpdf.Fpdf, pageObj model.FixedFormPage) (err error) {

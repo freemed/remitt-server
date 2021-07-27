@@ -1,6 +1,7 @@
 package translation
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -15,6 +16,7 @@ type TranslateX12Xml struct {
 	Hl        map[string]int
 	HlCounter int
 	Counters  map[string]int
+	ctx       context.Context
 }
 
 func (self *TranslateX12Xml) Resolver(in string, out string) bool {
@@ -42,6 +44,11 @@ func (self *TranslateX12Xml) Translate(source interface{}) (out []byte, err erro
 	}
 	out = []byte(outString)
 	return
+}
+
+func (self *TranslateX12Xml) SetContext(ctx context.Context) error {
+	self.ctx = ctx
+	return nil
 }
 
 func (self *TranslateX12Xml) RightPad(text string, length int) string {
