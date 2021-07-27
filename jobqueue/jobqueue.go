@@ -1,6 +1,7 @@
 package jobqueue
 
 import (
+	"context"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -12,6 +13,7 @@ import (
 	"github.com/freemed/remitt-server/common"
 	"github.com/freemed/remitt-server/config"
 	"github.com/freemed/remitt-server/model"
+	"github.com/freemed/remitt-server/model/user"
 	"github.com/freemed/remitt-server/translation"
 	"github.com/freemed/remitt-server/transport"
 )
@@ -286,6 +288,13 @@ func processJobQueueItem(w *JobQueueItem) error {
 func executeJob(w *JobQueueItem) error {
 	tag := fmt.Sprintf("executeJob(%d): ", w.ID)
 
+	u, err := model.GetUserByName(w.User)
+	if err != nil {
+		log.Printf("executeJob(): %s", err.Error())
+		return err
+	}
+	ctx := user.NewContext(context.Background(), &u)
+
 	// Render
 	inxml, err := ioutil.TempFile(config.Config.Paths.TemporaryPath, "render-in")
 	if err != nil {
@@ -322,6 +331,8 @@ func executeJob(w *JobQueueItem) error {
 		w.Fail(err)
 		return err
 	}
+	// Pass context to transport plugin
+	transportPlugin.SetContext(ctx)
 
 	// Resolve translation plugin
 	translationPluginName, err := translation.ResolveTranslator(w.RenderOption, transportPlugin.InputFormat())
