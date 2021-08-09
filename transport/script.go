@@ -106,8 +106,6 @@ type Script struct {
 
 // Transport performs the actual work of transport, given the input.
 func (s *Script) Transport(filename string, data interface{}) error {
-	// TODO: FIXME: IMPLEMENT: XXX
-
 	// Retrieve user from context
 	um, ok := user.FromContext(s.ctx)
 	if !ok {
@@ -119,6 +117,13 @@ func (s *Script) Transport(filename string, data interface{}) error {
 
 	// Prepopulate all of the input data
 	js.Initialize()
+
+	if s.script == "" {
+		return fmt.Errorf("no script option given")
+	}
+
+	// Import the data passed via interface
+	js.vm.Set("data", data)
 
 	// Run the script
 	err := js.RunUnsafe(s.script, s.timeout)
