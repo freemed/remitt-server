@@ -2,18 +2,18 @@ package common
 
 import (
 	//"io/ioutil"
+	"io/ioutil"
 	"log"
 	"strings"
 
+	"github.com/freemed/gokogiri/xml"
+	"github.com/freemed/ratago/xslt"
 	"github.com/freemed/remitt-server/config"
-	//"github.com/freemed/ratago/xslt"
-	//"github.com/freemed/gokogiri/xml"
 )
 
-/*
-// XslTransform uses the ratago native Go XSL implementation to perform XSL
+// XslTransformIntermal uses the ratago native Go XSL implementation to perform XSL
 // transforms with parameters.
-func XslTransform(inxml, xslfile, outxml string, vars map[string]string) error {
+func XslTransformInternal(inxml, xslfile, outxml string, vars map[string]string) error {
 	log.Printf("XslTransform(): %v", vars)
 
 	style, err := xml.ReadFile(xslfile, xml.StrictParseOption)
@@ -42,7 +42,6 @@ func XslTransform(inxml, xslfile, outxml string, vars map[string]string) error {
 
 	return ioutil.WriteFile(outxml, []byte(output), 644)
 }
-*/
 
 // XslTransformExternal uses the xsltproc binary to perform XSL transforms
 // with parameters.

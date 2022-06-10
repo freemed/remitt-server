@@ -2,15 +2,26 @@ module github.com/freemed/remitt-server/common
 
 go 1.18
 
-replace github.com/freemed/remitt-server/config => ../config
+replace (
+	github.com/freemed/gokogiri => ../../gokogiri
+	github.com/freemed/gokogiri/help => ../../gokogiri/help
+	github.com/freemed/gokogiri/util => ../../gokogiri/util
+	github.com/freemed/gokogiri/xpath => ../../gokogiri/xpath
+	github.com/freemed/remitt-server/config => ../config
+)
 
 require (
+	github.com/freemed/gokogiri/xml v0.0.0-20201230192900-c04779a870c8
+	github.com/freemed/ratago v0.0.0-20191105200024-660929a3e119
 	github.com/freemed/remitt-server/config v0.0.0-20210809134957-77971a6e1026
 	github.com/gin-gonic/gin v1.8.1
 	gopkg.in/gomail.v2 v2.0.0-20160411212932-81ebce5c23df
 )
 
 require (
+	github.com/freemed/gokogiri/help v0.0.0-00010101000000-000000000000 // indirect
+	github.com/freemed/gokogiri/util v0.0.0-00010101000000-000000000000 // indirect
+	github.com/freemed/gokogiri/xpath v0.0.0-00010101000000-000000000000 // indirect
 	github.com/gin-contrib/sse v0.1.0 // indirect
 	github.com/go-playground/locales v0.14.0 // indirect
 	github.com/go-playground/universal-translator v0.18.0 // indirect

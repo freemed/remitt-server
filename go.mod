@@ -3,6 +3,10 @@ module github.com/freemed/remitt-server
 go 1.18
 
 replace (
+	github.com/freemed/gokogiri/help => ../gokogiri/help
+	github.com/freemed/gokogiri/util => ../gokogiri/util
+	github.com/freemed/gokogiri/xml => ../gokogiri/xml
+	github.com/freemed/gokogiri/xpath => ../gokogiri/xpath
 	github.com/freemed/remitt-server/api => ./api
 	github.com/freemed/remitt-server/client => ./client
 	github.com/freemed/remitt-server/common => ./common
@@ -16,19 +20,24 @@ replace (
 
 require (
 	github.com/braintree/manners v0.0.0-20160418043613-82a8879fc5fd
-	github.com/freemed/remitt-server/api v0.0.0-20210809134957-77971a6e1026
-	github.com/freemed/remitt-server/common v0.0.0-20210809134957-77971a6e1026
-	github.com/freemed/remitt-server/config v0.0.0-20210809134957-77971a6e1026
-	github.com/freemed/remitt-server/jobqueue v0.0.0-20210809134957-77971a6e1026
-	github.com/freemed/remitt-server/model v0.0.0-20210809134957-77971a6e1026
+	github.com/freemed/remitt-server/api v0.0.0-20220610145658-0d058ed2108f
+	github.com/freemed/remitt-server/common v0.0.0-20220610145658-0d058ed2108f
+	github.com/freemed/remitt-server/config v0.0.0-20220610145658-0d058ed2108f
+	github.com/freemed/remitt-server/jobqueue v0.0.0-20220610145658-0d058ed2108f
+	github.com/freemed/remitt-server/model v0.0.0-20220610145658-0d058ed2108f
 	github.com/gin-gonic/contrib v0.0.0-20201101042839-6a891bf89f19
 	github.com/gin-gonic/gin v1.8.1
 )
 
 require (
-	github.com/freemed/remitt-server/model/user v0.0.0-20210809134957-77971a6e1026 // indirect
-	github.com/freemed/remitt-server/translation v0.0.0-20210809134957-77971a6e1026 // indirect
-	github.com/freemed/remitt-server/transport v0.0.0-20210809134957-77971a6e1026 // indirect
+	github.com/freemed/gokogiri/help v0.0.0-20201230192900-c04779a870c8 // indirect
+	github.com/freemed/gokogiri/util v0.0.0-20201230192900-c04779a870c8 // indirect
+	github.com/freemed/gokogiri/xml v0.0.0-20201230192900-c04779a870c8 // indirect
+	github.com/freemed/gokogiri/xpath v0.0.0-20201230192900-c04779a870c8 // indirect
+	github.com/freemed/ratago v0.0.0-20191105200024-660929a3e119 // indirect
+	github.com/freemed/remitt-server/model/user v0.0.0-20220610145658-0d058ed2108f // indirect
+	github.com/freemed/remitt-server/translation v0.0.0-20220610145658-0d058ed2108f // indirect
+	github.com/freemed/remitt-server/transport v0.0.0-20220610145658-0d058ed2108f // indirect
 	github.com/gin-contrib/sse v0.1.0 // indirect
 	github.com/go-gorp/gorp v2.2.0+incompatible // indirect
 	github.com/go-playground/locales v0.14.0 // indirect
