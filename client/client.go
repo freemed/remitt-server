@@ -70,46 +70,46 @@ func (c *RemittClient) Ping() (bool, time.Duration, error) {
 
 // ConfigGetAll retrieves all user configurable variables
 func (c *RemittClient) ConfigGetAll() ([]model.UserConfigModel, error) {
+	var out []model.UserConfigModel
 	req, err := http.NewRequest("GET", c.URL+"/api/config/all", nil)
 	if err != nil {
-		return []model.UserConfigModel{}, err
+		return out, err
 	}
 	req.SetBasicAuth(c.Username, c.Password)
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return []model.UserConfigModel{}, err
+		return out, err
 	}
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return []model.UserConfigModel{}, err
+		return out, err
 	}
-	var out []model.UserConfigModel
 	err = json.Unmarshal(body, &out)
 	if err != nil {
-		return []model.UserConfigModel{}, err
+		return out, err
 	}
 	return out, nil
 }
 
 // ConfigSet sets a value for a user configurable variable
 func (c *RemittClient) ConfigSet(namespace, key, value string) (bool, error) {
+	var out bool
 	req, err := http.NewRequest("POST", c.URL+fmt.Sprintf("/api/config/set/%s/%s/%s", namespace, key, value), nil)
 	if err != nil {
-		return false, err
+		return out, err
 	}
 	req.SetBasicAuth(c.Username, c.Password)
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return false, err
+		return out, err
 	}
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return false, err
+		return out, err
 	}
-	var out bool
 	err = json.Unmarshal(body, &out)
 	if err != nil {
-		return false, err
+		return out, err
 	}
 	return out, nil
 }
@@ -139,6 +139,7 @@ func (c *RemittClient) CurrentUser() (string, error) {
 
 // GetStatus retrieves the specified job status
 func (c *RemittClient) GetStatus(id int64) (JobStatus, error) {
+	var out JobStatus
 	req, err := http.NewRequest("GET", c.URL+fmt.Sprintf("/api/status/%d", id), nil)
 	if err != nil {
 		return JobStatus{}, err
@@ -152,7 +153,6 @@ func (c *RemittClient) GetStatus(id int64) (JobStatus, error) {
 	if err != nil {
 		return JobStatus{}, err
 	}
-	var out JobStatus
 	err = json.Unmarshal(body, &out)
 	if err != nil {
 		return JobStatus{}, err
@@ -252,7 +252,7 @@ func (c *RemittClient) ProtocolVersion() (string, error) {
 	return out, nil
 }
 
-func (c *RemittClient) objToReaderJSON(obj interface{}) io.Reader {
+func (c *RemittClient) objToReaderJSON(obj any) io.Reader {
 	b, _ := json.Marshal(obj)
 	return bytes.NewBuffer(b)
 }

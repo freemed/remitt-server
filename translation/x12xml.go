@@ -23,7 +23,7 @@ func (self *TranslateX12Xml) Resolver(in string, out string) bool {
 	return (in == "x12xml" && out == "x12") || (in == "x12xml" && out == "*")
 }
 
-func (self *TranslateX12Xml) Translate(source interface{}) (out []byte, err error) {
+func (self *TranslateX12Xml) Translate(source any) (out []byte, err error) {
 	src, ok := source.(model.X12Xml)
 	if !ok {
 		out = []byte{}

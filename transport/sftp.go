@@ -25,7 +25,7 @@ type Sftp struct {
 }
 
 // Transport performs the actual work of transport, given the input.
-func (s *Sftp) Transport(filename string, data interface{}) error {
+func (s *Sftp) Transport(filename string, data any) error {
 	// Validate basic settings before doing anything
 	if s.host == "" || s.port == 0 || s.username == "" {
 		return fmt.Errorf("sftp: missing host, port, or username")
@@ -86,7 +86,7 @@ func (s *Sftp) Options() []string {
 }
 
 // SetOptions sets the current options for this plugin
-func (s *Sftp) SetOptions(o map[string]interface{}) error {
+func (s *Sftp) SetOptions(o map[string]any) error {
 	s.username, _ = s.coerceOptionString(o, "sftpUsername")
 	s.password, _ = s.coerceOptionString(o, "sftpPassword")
 	s.host, _ = s.coerceOptionString(o, "sftpHost")
@@ -102,7 +102,7 @@ func (s *Sftp) SetContext(c context.Context) error {
 	return nil
 }
 
-func (s *Sftp) coerceOptionString(o map[string]interface{}, keyname string) (string, error) {
+func (s *Sftp) coerceOptionString(o map[string]any, keyname string) (string, error) {
 	x, ok := o[keyname]
 	if !ok {
 		return "", fmt.Errorf("unable to read option for '%s'", keyname)
@@ -114,7 +114,7 @@ func (s *Sftp) coerceOptionString(o map[string]interface{}, keyname string) (str
 	return y, nil
 }
 
-func (s *Sftp) coerceOptionInt(o map[string]interface{}, keyname string) (int, error) {
+func (s *Sftp) coerceOptionInt(o map[string]any, keyname string) (int, error) {
 	x, ok := o[keyname]
 	if !ok {
 		return 0, fmt.Errorf("unable to read option for '%s'", keyname)

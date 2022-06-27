@@ -22,7 +22,7 @@ require (
 	github.com/braintree/manners v0.0.0-20160418043613-82a8879fc5fd
 	github.com/freemed/remitt-server/api v0.0.0-20220610145658-0d058ed2108f
 	github.com/freemed/remitt-server/common v0.0.0-20220610145658-0d058ed2108f
-	github.com/freemed/remitt-server/config v0.0.0-20220610145658-0d058ed2108f
+	github.com/freemed/remitt-server/config v0.0.0-20220610164855-e7050fc6dac2
 	github.com/freemed/remitt-server/jobqueue v0.0.0-20220610145658-0d058ed2108f
 	github.com/freemed/remitt-server/model v0.0.0-20220610145658-0d058ed2108f
 	github.com/gin-gonic/contrib v0.0.0-20201101042839-6a891bf89f19
@@ -61,9 +61,9 @@ require (
 	github.com/pkg/sftp v1.13.4 // indirect
 	github.com/robertkrimen/otto v0.0.0-20211024170158-b87d35c0b86f // indirect
 	github.com/ugorji/go/codec v1.2.7 // indirect
-	golang.org/x/crypto v0.0.0-20220525230936-793ad666bf5e // indirect
-	golang.org/x/net v0.0.0-20220607020251-c690dde0001d // indirect
-	golang.org/x/sys v0.0.0-20220608164250-635b8c9b7f68 // indirect
+	golang.org/x/crypto v0.0.0-20220622213112-05595931fe9d // indirect
+	golang.org/x/net v0.0.0-20220624214902-1bab6f366d9e // indirect
+	golang.org/x/sys v0.0.0-20220624220833-87e55d714810 // indirect
 	golang.org/x/text v0.3.7 // indirect
 	google.golang.org/protobuf v1.28.0 // indirect
 	gopkg.in/alexcesaro/quotedprintable.v3 v3.0.0-20150716171945-2caba252f4dc // indirect

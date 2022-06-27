@@ -105,7 +105,7 @@ type Script struct {
 }
 
 // Transport performs the actual work of transport, given the input.
-func (s *Script) Transport(filename string, data interface{}) error {
+func (s *Script) Transport(filename string, data any) error {
 	// Retrieve user from context
 	um, ok := user.FromContext(s.ctx)
 	if !ok {
@@ -147,14 +147,14 @@ func (s *Script) SetContext(c context.Context) error {
 }
 
 // SetOptions sets the current options for this plugin
-func (s *Script) SetOptions(o map[string]interface{}) error {
+func (s *Script) SetOptions(o map[string]any) error {
 	s.script, _ = s.coerceOptionString(o, "script")
 	s.timeout, _ = s.coerceOptionInt(o, "timeout")
 
 	return nil
 }
 
-func (s *Script) coerceOptionString(o map[string]interface{}, keyname string) (string, error) {
+func (s *Script) coerceOptionString(o map[string]any, keyname string) (string, error) {
 	x, ok := o[keyname]
 	if !ok {
 		return "", fmt.Errorf("unable to read option for '%s'", keyname)
@@ -166,7 +166,7 @@ func (s *Script) coerceOptionString(o map[string]interface{}, keyname string) (s
 	return y, nil
 }
 
-func (s *Script) coerceOptionInt(o map[string]interface{}, keyname string) (int, error) {
+func (s *Script) coerceOptionInt(o map[string]any, keyname string) (int, error) {
 	x, ok := o[keyname]
 	if !ok {
 		return 0, fmt.Errorf("unable to read option for '%s'", keyname)

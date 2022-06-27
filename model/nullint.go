@@ -24,7 +24,7 @@ func (i NullInt64) MarshalJSON() ([]byte, error) {
 
 func (i *NullInt64) UnmarshalJSON(data []byte) error {
 	var err error
-	var v interface{}
+	var v any
 	if err = json.Unmarshal(data, &v); err != nil {
 		return err
 	}
@@ -32,7 +32,7 @@ func (i *NullInt64) UnmarshalJSON(data []byte) error {
 	case float64:
 		// Unmarshal again, directly to int64, to avoid intermediate float64
 		err = json.Unmarshal(data, &i.Int64)
-	case map[string]interface{}:
+	case map[string]any:
 		err = json.Unmarshal(data, &i.NullInt64)
 	case nil:
 		i.Valid = false

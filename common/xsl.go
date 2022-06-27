@@ -31,7 +31,7 @@ func XslTransformInternal(inxml, xslfile, outxml string, vars map[string]string)
 		return err
 	}
 
-	params := map[string]interface{}{}
+	params := map[string]any{}
 	for k, v := range vars {
 		params[k] = v
 	}

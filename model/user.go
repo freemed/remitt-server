@@ -1,8 +1,9 @@
 package model
 
 import (
-	"github.com/freemed/remitt-server/common"
 	"log"
+
+	"github.com/freemed/remitt-server/common"
 )
 
 const (
@@ -24,7 +25,7 @@ func init() {
 	DbTables = append(DbTables, DbTable{TableName: TABLE_USER, Obj: UserModel{}, Key: "Id"})
 }
 
-func (u *UserModel) UniqueId() interface{} {
+func (u *UserModel) UniqueId() any {
 	return u.Id
 }
 
@@ -44,7 +45,7 @@ func GetUserById(userId string) (UserModel, error) {
 
 // GetById will populate a user object from a database model with
 // a matching id.
-func (u *UserModel) GetById(id interface{}) error {
+func (u *UserModel) GetById(id any) error {
 	err := DbMap.SelectOne(u, "SELECT * FROM "+TABLE_USER+" WHERE id = ?", id)
 	if err != nil {
 		return err
@@ -60,7 +61,7 @@ func BasicAuthCallback(username string, password string) bool {
 
 func CheckUserPassword(username, userpassword string) (int64, bool) {
 	u := &UserModel{}
-	err := DbMap.SelectOne(u, "SELECT * FROM "+TABLE_USER+" WHERE username = :user AND passhash = :pass", map[string]interface{}{
+	err := DbMap.SelectOne(u, "SELECT * FROM "+TABLE_USER+" WHERE username = :user AND passhash = :pass", map[string]any{
 		"user": username,
 		"pass": common.Md5hash(userpassword),
 	})

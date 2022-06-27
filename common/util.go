@@ -5,11 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/gin-gonic/gin"
 	"io/ioutil"
 	"log"
 	"strconv"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 var (
@@ -29,7 +30,7 @@ func SleepFor(sec int64) {
 	}
 }
 
-func JsonEncode(o interface{}) []byte {
+func JsonEncode(o any) []byte {
 	b, err := json.Marshal(o)
 	if err != nil {
 		log.Print(err.Error())

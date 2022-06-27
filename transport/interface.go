@@ -5,7 +5,7 @@ import "context"
 // Transporter is the interface for transport plugins
 type Transporter interface {
 	// Transport performs the actual work of transport, given the input.
-	Transport(string, interface{}) error
+	Transport(string, any) error
 
 	// InputFormat returns the input format required by this plugin.
 	InputFormat() string
@@ -14,7 +14,7 @@ type Transporter interface {
 	Options() []string
 
 	// SetOptions sets the current options for this plugin
-	SetOptions(map[string]interface{}) error
+	SetOptions(map[string]any) error
 
 	// SetContext sets the context
 	SetContext(context.Context) error

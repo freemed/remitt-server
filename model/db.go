@@ -19,7 +19,7 @@ var (
 
 type DbTable struct {
 	TableName string
-	Obj       interface{}
+	Obj       any
 	Key       string
 }
 

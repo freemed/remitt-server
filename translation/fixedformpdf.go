@@ -33,7 +33,7 @@ func (t *TranslateFixedFormPDF) Resolver(in string, out string) bool {
 	return (in == "fixedformxml" && out == "pdf") || (in == "fixedformxml" && out == "*")
 }
 
-func (t *TranslateFixedFormPDF) Translate(source interface{}) (out []byte, err error) {
+func (t *TranslateFixedFormPDF) Translate(source any) (out []byte, err error) {
 	st := time.Now()
 
 	if t.Debug {

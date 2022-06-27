@@ -14,7 +14,7 @@ func Test_Script(t *testing.T) {
 		Id:       1,
 	}
 	s := Script{ctx: user.NewContext(context.Background(), &u)}
-	s.SetOptions(map[string]interface{}{
+	s.SetOptions(map[string]any{
 		"script": `
 		log('test -- data = ' + String.fromCharCode.apply(String, data));
 		`,
