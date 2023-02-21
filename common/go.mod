@@ -4,23 +4,27 @@ go 1.18
 
 replace (
 	github.com/freemed/gokogiri => ../../gokogiri
+	github.com/freemed/gokogiri/help => ../../gokogiri/help
+	github.com/freemed/gokogiri/html => ../../gokogiri/html
 	github.com/freemed/gokogiri/xml => ../../gokogiri/xml
+	github.com/freemed/gokogiri/xpath => ../../gokogiri/xpath
 	github.com/freemed/ratago => ../../ratago
+	github.com/freemed/ratago/xslt => ../../ratago/xslt
 	github.com/freemed/remitt-server/config => ../config
 )
 
 require (
-	github.com/freemed/gokogiri/xml v0.0.0-20201230192900-c04779a870c8
-	github.com/freemed/ratago v0.0.0-20191105200024-660929a3e119
+	github.com/freemed/gokogiri/xml v0.0.0-20220627154600-2acb041aa5ac
+	github.com/freemed/ratago/xslt v0.0.0-20220610164841-0ab820da5118
 	github.com/freemed/remitt-server/config v0.0.0-20220610164855-e7050fc6dac2
 	github.com/gin-gonic/gin v1.8.1
 	gopkg.in/gomail.v2 v2.0.0-20160411212932-81ebce5c23df
 )
 
 require (
-	github.com/freemed/gokogiri/help v0.0.0-20201230192900-c04779a870c8 // indirect
-	github.com/freemed/gokogiri/util v0.0.0-20201230192900-c04779a870c8 // indirect
-	github.com/freemed/gokogiri/xpath v0.0.0-20201230192900-c04779a870c8 // indirect
+	github.com/freemed/gokogiri/help v0.0.0-20220627154600-2acb041aa5ac // indirect
+	github.com/freemed/gokogiri/util v0.0.0-20220627154600-2acb041aa5ac // indirect
+	github.com/freemed/gokogiri/xpath v0.0.0-20220627154600-2acb041aa5ac // indirect
 	github.com/gin-contrib/sse v0.1.0 // indirect
 	github.com/go-playground/locales v0.14.0 // indirect
 	github.com/go-playground/universal-translator v0.18.0 // indirect
