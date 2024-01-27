@@ -1,0 +1,15 @@
+go 1.21
+
+toolchain go1.21.6
+
+use (
+	.
+	api
+	client
+	common
+	config
+	jobqueue
+	model
+	translation
+	transport
+)
