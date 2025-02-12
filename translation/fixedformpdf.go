@@ -47,7 +47,7 @@ func (t *TranslateFixedFormPDF) Translate(source any) (out []byte, err error) {
 	}
 
 	if t.Benchmark {
-		log.Printf("Conversion : %s", time.Now().Sub(st).String())
+		log.Printf("Conversion : %s", time.Since(st).String())
 	}
 
 	// Create new PDF factory
@@ -65,7 +65,7 @@ func (t *TranslateFixedFormPDF) Translate(source any) (out []byte, err error) {
 			return
 		}
 		if t.Benchmark {
-			log.Printf("Page %d : %s", iter+1, time.Now().Sub(st).String())
+			log.Printf("Page %d : %s", iter+1, time.Since(st).String())
 		}
 	}
 	writerSeeker := &writerseeker.WriterSeeker{}
@@ -79,8 +79,8 @@ func (t *TranslateFixedFormPDF) Translate(source any) (out []byte, err error) {
 	return
 }
 
-func (self *TranslateFixedFormPDF) SetContext(ctx context.Context) error {
-	self.ctx = ctx
+func (t *TranslateFixedFormPDF) SetContext(ctx context.Context) error {
+	t.ctx = ctx
 	return nil
 }
 
@@ -142,7 +142,7 @@ func (t *TranslateFixedFormPDF) RenderElement(c *gofpdf.Fpdf, pageObj model.Fixe
 	}
 
 	if t.Benchmark {
-		log.Printf("-- RenderElement(): NewParagraph: %s", time.Now().Sub(st).String())
+		log.Printf("-- RenderElement(): NewParagraph: %s", time.Since(st).String())
 	}
 
 	// Column / X
@@ -158,13 +158,13 @@ func (t *TranslateFixedFormPDF) RenderElement(c *gofpdf.Fpdf, pageObj model.Fixe
 	log.Printf("RenderElement(): xPos: %f, yPos: %f, content: '%s'", xPos, yPos, content)
 
 	if t.Benchmark {
-		log.Printf("-- RenderElement(): SetFont/Pos: %s", time.Now().Sub(fontSt).String())
+		log.Printf("-- RenderElement(): SetFont/Pos: %s", time.Since(fontSt).String())
 	}
 	// Push to current page
 	drawSt := time.Now()
 	c.Cell(xPos, yPos, content)
 	if t.Benchmark {
-		log.Printf("-- RenderElement(): Cell: %s", time.Now().Sub(drawSt).String())
+		log.Printf("-- RenderElement(): Cell: %s", time.Since(drawSt).String())
 	}
 	return
 }

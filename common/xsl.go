@@ -2,8 +2,9 @@ package common
 
 import (
 	//"io/ioutil"
-	"io/ioutil"
+
 	"log"
+	"os"
 	"strings"
 
 	"github.com/freemed/gokogiri/xml"
@@ -35,12 +36,12 @@ func XslTransformInternal(inxml, xslfile, outxml string, vars map[string]string)
 	for k, v := range vars {
 		params[k] = v
 	}
-	output, err := stylesheet.Process(doc, xslt.StylesheetOptions{true, params})
+	output, err := stylesheet.Process(doc, xslt.StylesheetOptions{IndentOutput: true, Parameters: params})
 	if err != nil {
 		return err
 	}
 
-	return ioutil.WriteFile(outxml, []byte(output), 644)
+	return os.WriteFile(outxml, []byte(output), 0644)
 }
 
 // XslTransformExternal uses the xsltproc binary to perform XSL transforms
@@ -59,7 +60,7 @@ func XslTransformExternal(inxml, xslfile, outxml string, vars map[string]string)
 	args = append(args, xslfile)
 	args = append(args, inxml)
 
-	log.Printf("XslTransformExternal(): " + strings.Join(args, " "))
+	log.Printf("XslTransformExternal(): %s", strings.Join(args, " "))
 
 	_, err := RunWithTimeout(args, 30)
 	if err != nil {

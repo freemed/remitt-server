@@ -1,6 +1,5 @@
 # REMITT SERVER
 
-[![Build Status](https://secure.travis-ci.org/freemed/remitt-server.png)](http://travis-ci.org/freemed/remitt-server)
 [![Go Report Card](https://goreportcard.com/badge/github.com/freemed/remitt-server)](https://goreportcard.com/report/github.com/freemed/remitt-server)
 [![GoDoc](https://godoc.org/github.com/freemed/remitt-server?status.png)](https://godoc.org/github.com/freemed/remitt-server)
 [![Join the chat at https://gitter.im/gin-gonic/gin](https://badges.gitter.im/Join%20Chat.svg)](https://gitter.im/freemed/remitt-server?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)

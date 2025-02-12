@@ -22,6 +22,6 @@ func Test_Script(t *testing.T) {
 	})
 	err := s.Transport("testfile.txt", ([]byte)("ABCDEFG"))
 	if err != nil {
-		t.Fatalf(err.Error())
+		t.Fatal(err.Error())
 	}
 }

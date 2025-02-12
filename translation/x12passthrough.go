@@ -13,11 +13,11 @@ type TranslateX12Passthrough struct {
 	ctx context.Context
 }
 
-func (self *TranslateX12Passthrough) Resolver(in string, out string) bool {
+func (t *TranslateX12Passthrough) Resolver(in string, out string) bool {
 	return (in == "x12" && out == "x12") || (in == "x12" && out == "*")
 }
 
-func (self *TranslateX12Passthrough) Translate(source any) (out []byte, err error) {
+func (t *TranslateX12Passthrough) Translate(source any) (out []byte, err error) {
 	src, works := source.([]byte)
 	if !works {
 		return []byte{}, fmt.Errorf("x12 bytes not provided")
@@ -25,7 +25,7 @@ func (self *TranslateX12Passthrough) Translate(source any) (out []byte, err erro
 	return src, nil
 }
 
-func (self *TranslateX12Passthrough) SetContext(ctx context.Context) error {
-	self.ctx = ctx
+func (t *TranslateX12Passthrough) SetContext(ctx context.Context) error {
+	t.ctx = ctx
 	return nil
 }

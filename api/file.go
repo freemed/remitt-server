@@ -29,7 +29,7 @@ func apiGetFile(c *gin.Context) {
 	tag := fmt.Sprintf("apiGetFile(%s,%s) [%s]: ", category, filename, user)
 
 	if category == "" || filename == "" {
-		log.Printf(tag + "Missing category or filename")
+		log.Print(tag + "Missing category or filename")
 		c.AbortWithStatus(http.StatusBadRequest)
 		return
 	}
@@ -74,7 +74,7 @@ func apiGetFileList(c *gin.Context) {
 	tag := fmt.Sprintf("apiGetFileList(%s,%s,%s) [%s]: ", category, criteria, value, user)
 
 	if category == "" || criteria == "" || value == "" {
-		log.Printf(tag + "Missing category or criteria or value")
+		log.Print(tag + "Missing category or criteria or value")
 		c.AbortWithStatus(http.StatusBadRequest)
 		return
 	}
@@ -91,13 +91,10 @@ func apiGetFileList(c *gin.Context) {
 	switch strings.ToLower(criteria) {
 	case "month":
 		queryBase += " DATE_FORMAT(f.stamp, '%Y-%m') = ? " + ";"
-		break
 	case "year":
 		queryBase += " DATE_FORMAT(f.stamp, '%Y') = ? " + ";"
-		break
 	case "payload":
 		queryBase += " f.payloadId = ? " + ";"
-		break
 	default:
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("bad criteria %s", criteria))
 		return
@@ -122,7 +119,7 @@ func apiGetOutputMonths(c *gin.Context) {
 	tag := fmt.Sprintf("apiGetOutputMonths(%s) [%s]: ", year, user)
 
 	if year == "" {
-		log.Printf(tag + "Missing year")
+		log.Print(tag + "Missing year")
 		c.AbortWithStatus(http.StatusBadRequest)
 		return
 	}

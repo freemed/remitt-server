@@ -62,13 +62,11 @@ func (s *Sftp) Transport(filename string, data any) error {
 		return err
 	}
 	defer f.Close()
-	switch data.(type) {
+	switch data := data.(type) {
 	case string:
-		f.Write([]byte(data.(string)))
-		break
+		f.Write([]byte(data))
 	case []byte:
-		f.Write(data.([]byte))
-		break
+		f.Write(data)
 	default:
 		return fmt.Errorf("sftp: invalid data type %#v presented", data)
 	}
