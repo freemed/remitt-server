@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"strconv"
 	"time"
@@ -22,7 +22,7 @@ func Md5hash(orig string) string {
 }
 
 func SleepFor(sec int64) {
-	for i := 0; i < int(sec); i++ {
+	for range int(sec) {
 		if !IsRunning {
 			return
 		}
@@ -41,7 +41,7 @@ func JsonEncode(o any) []byte {
 
 func BodyFromContext(c *gin.Context) ([]byte, error) {
 	defer c.Request.Body.Close()
-	return ioutil.ReadAll(c.Request.Body)
+	return io.ReadAll(c.Request.Body)
 }
 
 func ParamInt(c *gin.Context, param string) (int64, error) {

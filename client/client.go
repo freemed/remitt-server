@@ -46,26 +46,26 @@ func (c *RemittClient) Ping() (bool, time.Duration, error) {
 	startTime := time.Now()
 	req, err := http.NewRequest("GET", fmt.Sprintf(c.URL+"/api/ping/%s", pingText), nil)
 	if err != nil {
-		return false, time.Now().Sub(startTime), err
+		return false, time.Since(startTime), err
 	}
 	req.SetBasicAuth(c.Username, c.Password)
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return false, time.Now().Sub(startTime), err
+		return false, time.Since(startTime), err
 	}
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return false, time.Now().Sub(startTime), err
+		return false, time.Since(startTime), err
 	}
 	var out string
 	err = json.Unmarshal(body, &out)
 	if err != nil {
-		return false, time.Now().Sub(startTime), err
+		return false, time.Since(startTime), err
 	}
 	if out != pingText {
-		return false, time.Now().Sub(startTime), fmt.Errorf("%s != %s", out, pingText)
+		return false, time.Since(startTime), fmt.Errorf("%s != %s", out, pingText)
 	}
-	return true, time.Now().Sub(startTime), nil
+	return true, time.Since(startTime), nil
 }
 
 // ConfigGetAll retrieves all user configurable variables
@@ -80,7 +80,7 @@ func (c *RemittClient) ConfigGetAll() ([]model.UserConfigModel, error) {
 	if err != nil {
 		return out, err
 	}
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return out, err
 	}
@@ -217,7 +217,7 @@ func (c *RemittClient) PayloadResubmit(id int64) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return 0, err
 	}
@@ -240,7 +240,7 @@ func (c *RemittClient) ProtocolVersion() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", err
 	}

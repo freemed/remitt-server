@@ -1,7 +1,7 @@
 package common
 
 import (
-	"io/ioutil"
+	"io"
 	"log"
 	"os/exec"
 	"syscall"
@@ -33,7 +33,7 @@ func RunWithTimeout(command []string, timeout int) (string, error) {
 		cmd.Process.Kill()
 	})
 	err = cmd.Wait()
-	out, _ := ioutil.ReadAll(stdout)
+	out, _ := io.ReadAll(stdout)
 	log.Printf("RunWithTimeout(): Returned %d bytes", len(out))
 	timer.Stop()
 
