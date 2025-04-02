@@ -54,7 +54,7 @@ This "TODO" list covers migration from the 0.5.x J2EE backend for implementation
 - [ ] Translation plugins
   - [X] Import PDF overlay logic from [go fpdf port](https://github.com/jung-kurt/gofpdf)
   - [X] FixedFormPdf
-  - [ ] FixedFormXml
+  - [X] FixedFormXml
   - [X] X12Passthrough
   - [X] X12Xml
 - [ ] Transport plugins
