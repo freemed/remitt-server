@@ -5,12 +5,12 @@ go 1.24
 toolchain go1.24.0
 
 replace (
-	github.com/freemed/gokogiri => ../../gokogiri
-	github.com/freemed/gokogiri/help => ../../gokogiri/help
-	github.com/freemed/gokogiri/html => ../../gokogiri/html
-	github.com/freemed/gokogiri/xml => ../../gokogiri/xml
-	github.com/freemed/gokogiri/xpath => ../../gokogiri/xpath
-	github.com/freemed/ratago/xslt => ../../ratago/xslt
+	//github.com/freemed/gokogiri => ../../gokogiri
+	//github.com/freemed/gokogiri/help => ../../gokogiri/help
+	//github.com/freemed/gokogiri/html => ../../gokogiri/html
+	//github.com/freemed/gokogiri/xml => ../../gokogiri/xml
+	//github.com/freemed/gokogiri/xpath => ../../gokogiri/xpath
+	//github.com/freemed/ratago/xslt => ../../ratago/xslt
 	github.com/freemed/remitt-server => ../
 	github.com/freemed/remitt-server/config => ../config
 	github.com/ugorji/go => github.com/ugorji/go/codec v1.1.7
