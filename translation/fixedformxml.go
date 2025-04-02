@@ -92,6 +92,13 @@ func (t *TranslateFixedFormXML) RenderPage(o io.Writer, pageObj model.FixedFormP
 		}
 	}
 
+	spacing := t.padToPosition(row, col, pageObj.Format.PageLength+1, 1)
+	_, err = o.Write(spacing)
+	if err != nil {
+		log.Printf("TranslateFixedFormPDF.RenderPage(): Write(): ERR: %s", err.Error())
+		return err
+	}
+
 	return nil
 }
 
