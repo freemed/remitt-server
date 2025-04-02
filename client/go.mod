@@ -11,7 +11,7 @@ replace (
 	github.com/freemed/remitt-server/model => ../model
 )
 
-require github.com/freemed/remitt-server/model v0.0.0-20250212005903-eece10166231
+require github.com/freemed/remitt-server/model v0.0.0-20250331145336-3d6a47d26eae
 
 require (
 	filippo.io/edwards25519 v1.1.0 // indirect
@@ -23,8 +23,8 @@ require (
 	github.com/freemed/gokogiri/xml v0.0.0-20250203225759-a4d8eb383f22 // indirect
 	github.com/freemed/gokogiri/xpath v0.0.0-20250203225759-a4d8eb383f22 // indirect
 	github.com/freemed/ratago/xslt v0.0.0-20250203231425-016f1ea48158 // indirect
-	github.com/freemed/remitt-server/common v0.0.0-20250212005903-eece10166231 // indirect
-	github.com/freemed/remitt-server/config v0.0.0-20250212005903-eece10166231 // indirect
+	github.com/freemed/remitt-server/common v0.0.0-20250331145336-3d6a47d26eae // indirect
+	github.com/freemed/remitt-server/config v0.0.0-20250331145336-3d6a47d26eae // indirect
 	github.com/gabriel-vasile/mimetype v1.4.8 // indirect
 	github.com/gin-contrib/sse v1.0.0 // indirect
 	github.com/gin-gonic/gin v1.10.0 // indirect
