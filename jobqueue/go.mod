@@ -16,12 +16,12 @@ replace (
 )
 
 require (
-	github.com/freemed/remitt-server/common v0.0.0-20250402131507-189d39c2cb3f
-	github.com/freemed/remitt-server/config v0.0.0-20250402131507-189d39c2cb3f
-	github.com/freemed/remitt-server/model v0.0.0-20250402131507-189d39c2cb3f
-	github.com/freemed/remitt-server/model/user v0.0.0-20250402131507-189d39c2cb3f
-	github.com/freemed/remitt-server/translation v0.0.0-20250402131507-189d39c2cb3f
-	github.com/freemed/remitt-server/transport v0.0.0-20250402131507-189d39c2cb3f
+	github.com/freemed/remitt-server/common v0.0.0-20250402174545-e46b5a72440c
+	github.com/freemed/remitt-server/config v0.0.0-20250402174545-e46b5a72440c
+	github.com/freemed/remitt-server/model v0.0.0-20250402174545-e46b5a72440c
+	github.com/freemed/remitt-server/model/user v0.0.0-20250402173930-e8c4e93d608a
+	github.com/freemed/remitt-server/translation v0.0.0-20250402174545-e46b5a72440c
+	github.com/freemed/remitt-server/transport v0.0.0-20250402174545-e46b5a72440c
 )
 
 require (

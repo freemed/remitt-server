@@ -19,7 +19,7 @@ replace (
 require (
 	github.com/freemed/gokogiri/xml v0.0.0-20250203225759-a4d8eb383f22
 	github.com/freemed/ratago/xslt v0.0.0-20250203231425-016f1ea48158
-	github.com/freemed/remitt-server/config v0.0.0-20250402131507-189d39c2cb3f
+	github.com/freemed/remitt-server/config v0.0.0-20250402174545-e46b5a72440c
 	github.com/gin-gonic/gin v1.10.0
 	gopkg.in/gomail.v2 v2.0.0-20160411212932-81ebce5c23df
 )

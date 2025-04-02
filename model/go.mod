@@ -11,8 +11,8 @@ replace (
 )
 
 require (
-	github.com/freemed/remitt-server/common v0.0.0-20250402131507-189d39c2cb3f
-	github.com/freemed/remitt-server/config v0.0.0-20250402131507-189d39c2cb3f
+	github.com/freemed/remitt-server/common v0.0.0-20250402174545-e46b5a72440c
+	github.com/freemed/remitt-server/config v0.0.0-20250402174545-e46b5a72440c
 	github.com/go-gorp/gorp v2.2.0+incompatible
 	github.com/go-sql-driver/mysql v1.9.1
 	github.com/mattes/migrate v3.0.1+incompatible

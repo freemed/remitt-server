@@ -13,9 +13,9 @@ replace (
 )
 
 require (
-	github.com/freemed/remitt-server/common v0.0.0-20250402131507-189d39c2cb3f
-	github.com/freemed/remitt-server/model v0.0.0-20250402131507-189d39c2cb3f
-	github.com/freemed/remitt-server/model/user v0.0.0-20250402131507-189d39c2cb3f
+	github.com/freemed/remitt-server/common v0.0.0-20250402174545-e46b5a72440c
+	github.com/freemed/remitt-server/model v0.0.0-20250402174545-e46b5a72440c
+	github.com/freemed/remitt-server/model/user v0.0.0-20250402173930-e8c4e93d608a
 	github.com/pkg/sftp v1.13.9
 	github.com/robertkrimen/otto v0.5.1
 	golang.org/x/crypto v0.36.0
@@ -31,7 +31,7 @@ require (
 	github.com/freemed/gokogiri/xml v0.0.0-20250203225759-a4d8eb383f22 // indirect
 	github.com/freemed/gokogiri/xpath v0.0.0-20250203225759-a4d8eb383f22 // indirect
 	github.com/freemed/ratago/xslt v0.0.0-20250203231425-016f1ea48158 // indirect
-	github.com/freemed/remitt-server/config v0.0.0-20250402131507-189d39c2cb3f // indirect
+	github.com/freemed/remitt-server/config v0.0.0-20250402174545-e46b5a72440c // indirect
 	github.com/gabriel-vasile/mimetype v1.4.8 // indirect
 	github.com/gin-contrib/sse v1.0.0 // indirect
 	github.com/gin-gonic/gin v1.10.0 // indirect
