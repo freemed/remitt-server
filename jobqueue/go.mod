@@ -16,12 +16,12 @@ replace (
 )
 
 require (
-	github.com/freemed/remitt-server/common v0.0.0-20250331145336-3d6a47d26eae
-	github.com/freemed/remitt-server/config v0.0.0-20250331145336-3d6a47d26eae
-	github.com/freemed/remitt-server/model v0.0.0-20250331145336-3d6a47d26eae
-	github.com/freemed/remitt-server/model/user v0.0.0-20250331145336-3d6a47d26eae
-	github.com/freemed/remitt-server/translation v0.0.0-20250331145336-3d6a47d26eae
-	github.com/freemed/remitt-server/transport v0.0.0-20250331145336-3d6a47d26eae
+	github.com/freemed/remitt-server/common v0.0.0-20250402131507-189d39c2cb3f
+	github.com/freemed/remitt-server/config v0.0.0-20250402131507-189d39c2cb3f
+	github.com/freemed/remitt-server/model v0.0.0-20250402131507-189d39c2cb3f
+	github.com/freemed/remitt-server/model/user v0.0.0-20250402131507-189d39c2cb3f
+	github.com/freemed/remitt-server/translation v0.0.0-20250402131507-189d39c2cb3f
+	github.com/freemed/remitt-server/transport v0.0.0-20250402131507-189d39c2cb3f
 )
 
 require (
@@ -46,7 +46,6 @@ require (
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.10 // indirect
 	github.com/kr/fs v0.1.0 // indirect
-	github.com/kr/text v0.2.0 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/mattes/migrate v3.0.1+incompatible // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect

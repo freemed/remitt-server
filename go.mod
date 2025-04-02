@@ -25,11 +25,11 @@ replace (
 
 require (
 	github.com/braintree/manners v0.0.0-20160418043613-82a8879fc5fd
-	github.com/freemed/remitt-server/api v0.0.0-20250331145336-3d6a47d26eae
-	github.com/freemed/remitt-server/common v0.0.0-20250331145336-3d6a47d26eae
-	github.com/freemed/remitt-server/config v0.0.0-20250331145336-3d6a47d26eae
-	github.com/freemed/remitt-server/jobqueue v0.0.0-20250331145336-3d6a47d26eae
-	github.com/freemed/remitt-server/model v0.0.0-20250331145336-3d6a47d26eae
+	github.com/freemed/remitt-server/api v0.0.0-20250402131507-189d39c2cb3f
+	github.com/freemed/remitt-server/common v0.0.0-20250402131507-189d39c2cb3f
+	github.com/freemed/remitt-server/config v0.0.0-20250402131507-189d39c2cb3f
+	github.com/freemed/remitt-server/jobqueue v0.0.0-20250402131507-189d39c2cb3f
+	github.com/freemed/remitt-server/model v0.0.0-20250402131507-189d39c2cb3f
 	github.com/gin-gonic/contrib v0.0.0-20250113154928-93b827325fec
 	github.com/gin-gonic/gin v1.10.0
 )
@@ -47,9 +47,9 @@ require (
 	github.com/freemed/gokogiri/xml v0.0.0-20250203225759-a4d8eb383f22 // indirect
 	github.com/freemed/gokogiri/xpath v0.0.0-20250203225759-a4d8eb383f22 // indirect
 	github.com/freemed/ratago/xslt v0.0.0-20250203231425-016f1ea48158 // indirect
-	github.com/freemed/remitt-server/model/user v0.0.0-20250331145336-3d6a47d26eae // indirect
-	github.com/freemed/remitt-server/translation v0.0.0-20250331145336-3d6a47d26eae // indirect
-	github.com/freemed/remitt-server/transport v0.0.0-20250331145336-3d6a47d26eae // indirect
+	github.com/freemed/remitt-server/model/user v0.0.0-20250402131507-189d39c2cb3f // indirect
+	github.com/freemed/remitt-server/translation v0.0.0-20250402131507-189d39c2cb3f // indirect
+	github.com/freemed/remitt-server/transport v0.0.0-20250402131507-189d39c2cb3f // indirect
 	github.com/gabriel-vasile/mimetype v1.4.8 // indirect
 	github.com/gin-contrib/sse v1.0.0 // indirect
 	github.com/go-gorp/gorp v2.2.0+incompatible // indirect
