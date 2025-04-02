@@ -1,0 +1,65 @@
+<html>
+
+<head>
+	<title>REMITT Server</title>
+	<link href="css/stylesheet.css" rel="stylesheet" type="text/css" />
+</head>
+
+<body>
+	<h1>
+		<a href="http://remitt.org/"><img src="img/remitt.jpg" border="0" /></a> REMITT Electronic Medical Information
+		Translation and Transmission
+	</h1>
+	<ul id="menubar">
+		<li><a href="index.jsp">Home</a></li>
+		<li><a href="services/">Services</a></li>
+		<li><a href="configurationDisplay.jsp">Configuration</a></li>
+		<li><a href="testHarness.jsp">Test Harness</a></li>
+		<li><a href="TestServlet">Unit Tests</a></li>
+	</ul>
+
+	<h2>Keyring Maintenance</h2>
+
+	<table border="1" cellpadding="5">
+		<thead>
+			<tr>
+				<th>Name</th>
+				<th>Private</th>
+				<th>Public</th>
+				<th>Action</th>
+			</tr>
+		</thead>
+		<tbody>
+			<% Logger log=Logger.getLogger(this.getClass()); String username=request.getUserPrincipal().getName();
+				KeyringItem[] keys=KeyringStore.getKeys(username); for (KeyringItem key : keys) { out.println("<tr>
+				<form method=\"post\" action=\"keyringCommit.jsp\">");
+					out.println("<td><input type=\"hidden\" name=\"keyname\" value=\"" + key.getKeyname() + "\"
+							size=\"25\" /><code>"
+					+ key.getKeyname()
+					+ "</code></td>");
+					out.println("<td><textarea name=\"privatekey\" width=\"40\"" + " wrap=\" virtual\" height=\"10\">"
+					+ new String(key.getPrivatekey()) + "</textarea></td>");
+					out.println("<td><textarea name=\"publickey\" width=\"40\"" + " wrap=\" virtual\" height=\"10\">"
+					+ new String(key.getPublickey()) + "</textarea></td>");
+					out.println("<td><input type=\"submit\" name=\"action\" value=\"" + "save" + "\" />"
+						+ "<input type=\"submit\" name=\"action\" value=\"" + "delete" + "\" /></td>");
+					out.println("</form>
+				</tr>");
+				}
+				%>
+				<tr>
+					<form method="post" action="keyringCommit.jsp">
+						<td><input type="text" name="keyname" size="25" value="" /></td>
+						<td><textarea name="privatekey" width="40" wrap="virtual" height="10"></textarea></td>
+						<td><textarea name="publickey" width="40" wrap="virtual" height="10"></textarea></td>
+						<td><input type="submit" name="action" value="add" /></td>
+					</form>
+				</tr>
+		</tbody>
+	</table>
+
+	<div align="center"><i>&copy; 1999- by the FreeMED Software Foundation</i></div>
+
+</body>
+
+</html>

@@ -1,0 +1,47 @@
+<html>
+
+<head>
+	<title>REMITT Server</title>
+	<link href="css/stylesheet.css" rel="stylesheet" type="text/css" />
+</head>
+
+<body>
+	<h1>
+		<a href="http://remitt.org/"><img src="img/remitt.jpg" border="0" /></a> REMITT Electronic Medical Information
+		Translation and Transmission
+	</h1>
+	<ul id="menubar">
+		<li><a href="index.jsp">Home</a></li>
+		<li><a href="services/">Services</a></li>
+		<li><a href="configurationDisplay.jsp">Configuration</a></li>
+		<li><a href="testHarness.jsp">Test Harness</a></li>
+		<li><a href="TestServlet">Unit Tests</a></li>
+	</ul>
+
+	<h2>Thread Pool</h2>
+
+	<table border="1" width="100%">
+		<tr>
+			<th>Thread ID</th>
+			<th>Type</th>
+			<th>Processor ID</th>
+			<th>Plugin Class</th>
+		</tr>
+		<% Logger log=Logger.getLogger(this.getClass()); List<JobThreadState> pool =
+			Configuration.getControlThread().getThreadPool();
+			for (JobThreadState s : pool) {
+			out.println("<tr>");
+				out.println("<td>" + s.getThreadId() + "</td>");
+				out.println("<td>" + s.getThreadType().toString() + "</td>");
+				out.println("<td>" + s.getProcessorId() + "</td>");
+				out.println("<td>" + s.getPlugin() + "&nbsp;</td>");
+				out.println("</tr>");
+			}
+			%>
+	</table>
+
+	<div align="center"><i>&copy; 1999- by the FreeMED Software Foundation</i></div>
+
+</body>
+
+</html>
