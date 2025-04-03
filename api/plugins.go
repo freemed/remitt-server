@@ -12,11 +12,11 @@ import (
 
 func init() {
 	common.ApiMap["plugins"] = func(r *gin.RouterGroup) {
-		r.GET("/:category", apiPluginsGetAll)
+		r.GET("/:category", a.PluginsGetAll)
 	}
 }
 
-func apiPluginsGetAll(c *gin.Context) {
+func (a Api) PluginsGetAll(c *gin.Context) {
 	user := c.MustGet(gin.AuthUserKey).(string)
 	cat := c.Param("category")
 

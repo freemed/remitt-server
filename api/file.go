@@ -13,14 +13,14 @@ import (
 
 func init() {
 	common.ApiMap["file"] = func(r *gin.RouterGroup) {
-		r.GET("/get/:category/:filename", apiGetFile)
-		r.GET("/list/:category/:criteria/:value", apiGetFileList)
-		r.GET("/listgroups/year", apiGetOutputYears)
-		r.GET("/listgroups/month/:year", apiGetOutputMonths)
+		r.GET("/get/:category/:filename", a.GetFile)
+		r.GET("/list/:category/:criteria/:value", a.GetFileList)
+		r.GET("/listgroups/year", a.GetOutputYears)
+		r.GET("/listgroups/month/:year", a.GetOutputMonths)
 	}
 }
 
-func apiGetFile(c *gin.Context) {
+func (a Api) GetFile(c *gin.Context) {
 	user := c.MustGet(gin.AuthUserKey).(string)
 
 	category := c.Param("category")
@@ -64,7 +64,7 @@ func apiGetFile(c *gin.Context) {
 	c.Data(http.StatusOK, contentType, o.Content)
 }
 
-func apiGetFileList(c *gin.Context) {
+func (a Api) GetFileList(c *gin.Context) {
 	user := c.MustGet(gin.AuthUserKey).(string)
 
 	category := c.Param("category")
@@ -111,7 +111,7 @@ func apiGetFileList(c *gin.Context) {
 	c.JSON(http.StatusOK, items)
 }
 
-func apiGetOutputMonths(c *gin.Context) {
+func (a Api) GetOutputMonths(c *gin.Context) {
 	user := c.MustGet(gin.AuthUserKey).(string)
 
 	year := c.Param("year")
@@ -140,7 +140,7 @@ func apiGetOutputMonths(c *gin.Context) {
 	c.JSON(http.StatusOK, items)
 }
 
-func apiGetOutputYears(c *gin.Context) {
+func (a Api) GetOutputYears(c *gin.Context) {
 	user := c.MustGet(gin.AuthUserKey).(string)
 
 	tag := fmt.Sprintf("apiGetOutputYears() [%s]: ", user)

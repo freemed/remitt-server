@@ -12,8 +12,8 @@ import (
 
 func init() {
 	common.ApiMap["status"] = func(r *gin.RouterGroup) {
-		r.GET("/:id", apiGetStatus)
-		r.POST("/bulk/", apiGetBulkStatus)
+		r.GET("/:id", a.GetStatus)
+		r.POST("/bulk/", a.GetBulkStatus)
 	}
 }
 
@@ -22,7 +22,7 @@ type getStatusResult struct {
 	Stage  string `db:"stage" json:"stage"`
 }
 
-func apiGetStatus(c *gin.Context) {
+func (a Api) GetStatus(c *gin.Context) {
 	user := c.MustGet(gin.AuthUserKey).(string)
 
 	payloadID, err := common.ParamInt(c, "id")
@@ -45,7 +45,7 @@ func apiGetStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, obj)
 }
 
-func apiGetBulkStatus(c *gin.Context) {
+func (a Api) GetBulkStatus(c *gin.Context) {
 	user := c.MustGet(gin.AuthUserKey).(string)
 
 	tag := fmt.Sprintf("apiGetBulkStatus() [%s]: ", user)

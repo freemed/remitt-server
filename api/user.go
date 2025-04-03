@@ -10,17 +10,17 @@ import (
 
 func init() {
 	common.ApiMap["currentuser"] = func(r *gin.RouterGroup) {
-		r.GET("/", apiGetUsername)
-		r.POST("/password", apiChangePassword)
+		r.GET("/", a.GetUsername)
+		r.POST("/password", a.ChangePassword)
 	}
 }
 
-func apiGetUsername(c *gin.Context) {
+func (a Api) GetUsername(c *gin.Context) {
 	user := c.MustGet(gin.AuthUserKey).(string)
 	c.JSON(http.StatusOK, user)
 }
 
-func apiChangePassword(c *gin.Context) {
+func (a Api) ChangePassword(c *gin.Context) {
 	user := c.MustGet(gin.AuthUserKey).(string)
 	var pass string
 	err := c.BindJSON(&pass)

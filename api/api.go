@@ -13,12 +13,19 @@ const (
 	ProtocolVersion = "0.6"
 )
 
+var (
+	a Api
+)
+
+type Api struct {
+}
+
 func init() {
 	common.ApiMap["ping"] = func(r *gin.RouterGroup) {
-		r.POST("/:text", apiPing)
+		r.POST("/:text", a.Ping)
 	}
 }
 
-func apiPing(c *gin.Context) {
+func (a Api) Ping(c *gin.Context) {
 	c.JSON(http.StatusOK, c.Param("text"))
 }
