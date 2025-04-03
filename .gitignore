@@ -1,5 +1,9 @@
 remitt-server
 test/*.pdf
 test/*.x12
+test/*.txt
 vendor
 go.sum
+go.work.sum
+ui/node_modules
+ui/yarn.lock

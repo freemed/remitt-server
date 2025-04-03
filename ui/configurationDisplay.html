@@ -3,6 +3,8 @@
 <head>
 	<title>REMITT Server</title>
 	<link href="css/stylesheet.css" rel="stylesheet" type="text/css" />
+	<script type="text/javascript" src="node_modules/jquery/dist/jquery.min.js"></script>
+	<script type="text/javascript" src="node_modules/popper.js/dist/umd/popper.min.js"></script>
 </head>
 
 <body>
@@ -76,6 +78,21 @@
 	</table>
 
 	<div align="center"><i>&copy; 1999- by the FreeMED Software Foundation</i></div>
+
+	<script>
+		$(document).ready(function () {
+			$.ajaxSetup({
+				// Set a reasonable timeout for all queries to deal with failures
+				timeout: 10000,
+				// Disable request caching
+				cache: false
+			});
+
+			// 
+			//$.getJSON("../api/", function (response, status, xhr) {
+			//});
+		});
+	</script>
 
 </body>
 

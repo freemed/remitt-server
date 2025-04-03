@@ -3,6 +3,8 @@
 <head>
 	<title>REMITT Server</title>
 	<link href="css/stylesheet.css" rel="stylesheet" type="text/css" />
+	<script type="text/javascript" src="node_modules/jquery/dist/jquery.min.js"></script>
+	<script type="text/javascript" src="node_modules/popper.js/dist/umd/popper.min.js"></script>
 </head>
 
 <body>
@@ -25,16 +27,15 @@
 		<tbody>
 			<tr>
 				<th>REMITT Version</th>
-				<td>##FIXME##</td>
+				<td><span id="version"></span></td>
 			</tr>
 			<tr>
 				<th>Username</th>
-				<td>##FIXME##</td>
+				<td><span id="user"></span></td>
 			</tr>
 			<tr>
 				<th>Server</th>
-				<td>##FIXME##:##FIXME##
-					connecting from ##FIXME##</td>
+				<td>connecting from <span id="remote_address"></span></td>
 			</tr>
 		</tbody>
 	</table>
@@ -51,6 +52,27 @@
 	</ul>
 
 	<div align="center"><i>&copy; 1999- by the FreeMED Software Foundation</i></div>
+
+	<script>
+		$(document).ready(function () {
+			$.ajaxSetup({
+				// Set a reasonable timeout for all queries to deal with failures
+				timeout: 10000,
+				// Disable request caching
+				cache: false
+			});
+
+			// Load server info
+			$.getJSON("../api/version/info", function (response, status, xhr) {
+				if (status == 'error') {
+					return;
+				}
+				$('SPAN#version').html("<b>" + response.version + "</b>");
+				$('SPAN#user').html("<b>" + response.user + "</b>");
+				$('SPAN#remote_address').html("<b>" + response.remote_address + "</b>");
+			});
+		});
+	</script>
 
 </body>
 

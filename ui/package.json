@@ -1,0 +1,17 @@
+{
+  "dependencies": {
+    "bootstrap": "twbs/bootstrap#^4.5.0",
+    "fontawesome": "FortAwesome/Font-Awesome#^5.15.2",
+    "jquery": "jquery/jquery-dist#^3.6.0",
+    "jquery.toaster": "scottoffen/jquery.toaster#^1.2.0",
+    "popper.js": "FezVrasta/popper.js#^1.16.0",
+    "requirejs": "^2.3.6",
+    "tablesorter": "^2.31.3",
+    "toastr": "CodeSeven/toastr#2.1.4"
+  },
+  "engines": {
+    "yarn": ">= 1.0.0"
+  },
+  "scripts": {},
+  "version": "0.6"
+}
