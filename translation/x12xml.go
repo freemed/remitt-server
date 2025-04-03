@@ -27,7 +27,7 @@ func (t *TranslateX12Xml) Translate(source any) (out []byte, err error) {
 	src, ok := source.(model.X12Xml)
 	if !ok {
 		out = []byte{}
-		err = errors.New("invalid datatype presented")
+		err = errors.New("x12xml: translate: invalid datatype presented")
 		return
 	}
 
@@ -38,7 +38,7 @@ func (t *TranslateX12Xml) Translate(source any) (out []byte, err error) {
 	for iter := range src.Segments {
 		r, err := t.RenderSegment(src, src.Segments[iter], iter)
 		if err != nil {
-			return out, err
+			return out, fmt.Errorf("x12xml: translate: rendersegment: %w", err)
 		}
 		outString += r
 	}
@@ -49,22 +49,6 @@ func (t *TranslateX12Xml) Translate(source any) (out []byte, err error) {
 func (t *TranslateX12Xml) SetContext(ctx context.Context) error {
 	t.ctx = ctx
 	return nil
-}
-
-func (t *TranslateX12Xml) RightPad(text string, length int) string {
-	x := text
-	for iter := 0; iter < length-len(text); iter++ {
-		x += " "
-	}
-	return x
-}
-
-func (t *TranslateX12Xml) LeftZeroPad(text string, length int) string {
-	x := text
-	for iter := 0; iter < length-len(text); iter++ {
-		x = "0" + x
-	}
-	return x
 }
 
 func (t *TranslateX12Xml) RenderSegment(source model.X12Xml, segment model.X12Segment, segmentCount int) (out string, err error) {
@@ -111,14 +95,14 @@ func (t *TranslateX12Xml) RenderSegment(source model.X12Xml, segment model.X12Se
 				if len(content) > el.Content.FixedLength {
 					content = content[0:el.Content.FixedLength]
 				} else if len(content) < el.Content.FixedLength {
-					content = t.RightPad(content, el.Content.FixedLength)
+					content = t.rightPad(content, el.Content.FixedLength)
 				}
 			}
 			if el.Content.ZeroPrepend != 0 {
 				if len(content) > el.Content.ZeroPrepend {
 					content = content[0:el.Content.ZeroPrepend]
 				} else if len(content) < el.Content.ZeroPrepend {
-					content = t.LeftZeroPad(content, el.Content.ZeroPrepend)
+					content = t.leftZeroPad(content, el.Content.ZeroPrepend)
 				}
 			}
 		}
@@ -141,3 +125,20 @@ func (t *TranslateX12Xml) RenderSegment(source model.X12Xml, segment model.X12Se
 
 	return
 }
+
+func (t *TranslateX12Xml) rightPad(text string, length int) string {
+	x := text
+	for iter := 0; iter < length-len(text); iter++ {
+		x += " "
+	}
+	return x
+}
+
+func (t *TranslateX12Xml) leftZeroPad(text string, length int) string {
+	x := text
+	for iter := 0; iter < length-len(text); iter++ {
+		x = "0" + x
+	}
+	return x
+}
+

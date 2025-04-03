@@ -20,7 +20,7 @@ func (t *TranslateX12Passthrough) Resolver(in string, out string) bool {
 func (t *TranslateX12Passthrough) Translate(source any) (out []byte, err error) {
 	src, works := source.([]byte)
 	if !works {
-		return []byte{}, fmt.Errorf("x12 bytes not provided")
+		return []byte{}, fmt.Errorf("x12passthrough: translate: x12 bytes not provided")
 	}
 	return src, nil
 }

@@ -3,7 +3,7 @@ package translation
 import (
 	"bytes"
 	"context"
-	"errors"
+	"fmt"
 	"io"
 	"strings"
 
@@ -33,7 +33,7 @@ func (t *TranslateFixedFormPDF) Resolver(in string, out string) bool {
 	return (in == "fixedformxml" && out == "pdf") || (in == "fixedformxml" && out == "*")
 }
 
-func (t *TranslateFixedFormPDF) Translate(source any) (out []byte, err error) {
+func (t *TranslateFixedFormPDF) Translate(source any) ([]byte, error) {
 	st := time.Now()
 
 	if t.Debug {
@@ -42,8 +42,7 @@ func (t *TranslateFixedFormPDF) Translate(source any) (out []byte, err error) {
 
 	src, ok := source.(model.FixedFormXml)
 	if !ok {
-		err = errors.New("invalid datatype presented")
-		return
+		return []byte{}, fmt.Errorf("fixedformpdf: translate: invalid datatype presented")
 	}
 
 	if t.Benchmark {
@@ -58,11 +57,14 @@ func (t *TranslateFixedFormPDF) Translate(source any) (out []byte, err error) {
 	// blank pages.
 	c.SetAutoPageBreak(false, 0)
 
+	var err error
+	out := []byte{}
+
 	for iter := range src.Pages {
 		err = t.RenderPage(c, src.Pages[iter])
 		if err != nil {
 			log.Printf("Translate(): %s", err.Error())
-			return
+			return []byte{}, fmt.Errorf("fixedformpdf: translate: renderpage: %w", err)
 		}
 		if t.Benchmark {
 			log.Printf("Page %d : %s", iter+1, time.Since(st).String())
@@ -76,7 +78,7 @@ func (t *TranslateFixedFormPDF) Translate(source any) (out []byte, err error) {
 		buf.ReadFrom(reader)
 		out = buf.Bytes()
 	}
-	return
+	return out, err
 }
 
 func (t *TranslateFixedFormPDF) SetContext(ctx context.Context) error {
@@ -167,20 +169,4 @@ func (t *TranslateFixedFormPDF) RenderElement(c *gofpdf.Fpdf, pageObj model.Fixe
 		log.Printf("-- RenderElement(): Cell: %s", time.Since(drawSt).String())
 	}
 	return
-}
-
-func (t *TranslateFixedFormPDF) RightPad(text string, length int) string {
-	x := text
-	for iter := 0; iter < length-len(text); iter++ {
-		x += " "
-	}
-	return x
-}
-
-func (t *TranslateFixedFormPDF) LeftZeroPad(text string, length int) string {
-	x := text
-	for iter := 0; iter < length-len(text); iter++ {
-		x = "0" + x
-	}
-	return x
 }

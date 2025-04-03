@@ -39,27 +39,24 @@ func (s *Sftp) Transport(filename string, data any) error {
 		Auth:    []ssh.AuthMethod{}, // populate later
 		Timeout: time.Duration(10) * time.Second,
 	}
-	if s.password != "" {
-		sshConfig.Auth = append(sshConfig.Auth, ssh.Password(s.password))
-	}
-	if s.keydata != "" {
+	if s.password != "" || s.keydata != "" {
 		sshConfig.Auth = append(sshConfig.Auth, ssh.Password(s.password))
 	}
 
 	sshClient, err := ssh.Dial("tcp", fmt.Sprintf("%s:%d", s.host, s.port), sshConfig)
 	if err != nil {
-		return err
+		return fmt.Errorf("sftp: dial: %w", err)
 	}
 	defer sshClient.Close()
 	sftpClient, err := sftp.NewClient(sshClient)
 	if err != nil {
-		return err
+		return fmt.Errorf("sftp: client: %w", err)
 	}
 	defer sftpClient.Close()
 
 	f, err := sftpClient.Create(fmt.Sprintf("%s/%s", s.path, filename))
 	if err != nil {
-		return err
+		return fmt.Errorf("sftp: create: %w", err)
 	}
 	defer f.Close()
 	switch data := data.(type) {

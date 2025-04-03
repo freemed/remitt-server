@@ -16,15 +16,15 @@ func CreateZip(outfile string, infiles []string) error {
 	for _, file := range infiles {
 		f, err := w.Create(filepath.Base(file))
 		if err != nil {
-			return err
+			return fmt.Errorf("createzip: create: %w", err)
 		}
 		contents, err := os.ReadFile(file)
 		if err != nil {
-			return err
+			return fmt.Errorf("createzip: readfile: %w", err)
 		}
 		_, err = f.Write(contents)
 		if err != nil {
-			return err
+			return fmt.Errorf("createzip: write: %w", err)
 		}
 	}
 	err := w.Close()

@@ -3,7 +3,7 @@ package translation
 import (
 	"bytes"
 	"context"
-	"errors"
+	"fmt"
 	"io"
 	"log"
 	"sort"
@@ -31,8 +31,7 @@ func (t *TranslateFixedFormXML) Translate(source any) (out []byte, err error) {
 
 	src, ok := source.(model.FixedFormXml)
 	if !ok {
-		err = errors.New("invalid datatype presented")
-		return
+		return []byte{}, fmt.Errorf("fixedformxml: translate: render: invalid datatype presented")
 	}
 
 	ob := &bytes.Buffer{}
@@ -47,7 +46,7 @@ func (t *TranslateFixedFormXML) Translate(source any) (out []byte, err error) {
 
 		err = t.RenderPage(ob, src.Pages[iter])
 		if err != nil {
-			return ob.Bytes(), err
+			return ob.Bytes(), fmt.Errorf("fixedformxml: translate: render: %w", err)
 		}
 	}
 
