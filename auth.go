@@ -2,11 +2,13 @@ package main
 
 import (
 	"encoding/base64"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"github.com/freemed/remitt-server/model"
 	"github.com/gin-gonic/gin"
 )
 
@@ -35,11 +37,28 @@ func BasicAuth(afunc func(string, string) bool, realm string) gin.HandlerFunc {
 			log.Printf("BasicAuth(): Credentials for %s do not match", pair[0])
 			c.Header("WWW-Authenticate", realm)
 			c.AbortWithStatus(401)
+			return
 		} else {
 			// The user credentials was found, set user's id to key AuthUserKey in this context, the userId can be read later using
 			// c.MustGet(gin.AuthUserKey)
 			log.Printf("BasicAuth() [%s]: Authenticated user", pair[0])
 			c.Set(gin.AuthUserKey, pair[0])
+
+			u, err := model.GetUserByName(pair[0])
+			if err != nil {
+				log.Printf("BasicAuth(): GetUserByName: %s", err.Error())
+				c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("basicauth: getuserbyname: %w", err))
+				return
+			}
+			c.Set("userObj", u)
+
+			// Roles
+			r, err := u.GetRoles()
+			if err == nil {
+				c.Set("roles", r)
+			} else {
+				c.Set("roles", []string{})
+			}
 		}
 	}
 }

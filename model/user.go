@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"log"
 
 	"github.com/freemed/remitt-server/common"
@@ -14,6 +15,7 @@ type UserModel struct {
 	Id                     int64      `db:"id"`
 	Username               string     `db:"username"`
 	PasswordHash           string     `db:"passhash"`
+	Role                   string     `db:"role"`
 	ContactEmail           NullString `db:"contactemail"`
 	CallbackServiceUri     string     `db:"callbackserviceuri"`
 	CallbackServiceWsdlUri string     `db:"callbackservicewsdluri"`
@@ -52,6 +54,15 @@ func (u *UserModel) GetById(id any) error {
 	}
 
 	return nil
+}
+
+func (u UserModel) GetRoles() ([]string, error) {
+	var r []string
+	_, err := DbMap.Select(&r, "SELECT r.rolename FROM tUserRoles r LEFT OUTER JOIN tUser u ON u.username = r.username WHERE id = ?", u.Id)
+	if err != nil {
+		return []string{}, fmt.Errorf("getroles: %w", err)
+	}
+	return r, nil
 }
 
 func BasicAuthCallback(username string, password string) bool {

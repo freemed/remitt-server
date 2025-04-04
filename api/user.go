@@ -13,6 +13,9 @@ func init() {
 		r.GET("/", a.GetUsername)
 		r.POST("/password", a.ChangePassword)
 	}
+	common.ApiMap["user"] = func(r *gin.RouterGroup) {
+		r.GET("/list", a.UserList)
+	}
 }
 
 func (a Api) GetUsername(c *gin.Context) {
@@ -34,4 +37,17 @@ func (a Api) ChangePassword(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, user)
+}
+
+func (a Api) UserList(c *gin.Context) {
+	a.aclRequireRole(c, "admin")
+
+	o := []string{}
+	_, err := model.DbMap.Select(&o, "SELECT username FROM "+model.TABLE_USER+" ORDER BY username")
+	if err != nil {
+		c.AbortWithError(http.StatusInternalServerError, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, o)
 }
