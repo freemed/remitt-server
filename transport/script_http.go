@@ -1,9 +1,12 @@
 package transport
 
 import (
+	"bytes"
 	"io"
 	"log"
 	"net/http"
+
+	"github.com/PuerkitoBio/goquery"
 )
 
 type httpclient struct {
@@ -41,4 +44,13 @@ func (o *httpclient) GetWithBasicAuth(url string, username string, password stri
 	}
 	data, _ := io.ReadAll(response.Body)
 	return string(data)
+}
+
+func (o *httpclient) GoQuery(body []byte) *goquery.Document {
+	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(body))
+	if err != nil {
+		log.Printf("JS.http.GoQuery: %s: The HTTP request failed with error %s", o.obj.user.Username, err.Error())
+		return nil
+	}
+	return doc
 }
