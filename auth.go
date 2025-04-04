@@ -47,7 +47,7 @@ func BasicAuth(afunc func(string, string) bool, realm string) gin.HandlerFunc {
 			u, err := model.GetUserByName(pair[0])
 			if err != nil {
 				log.Printf("BasicAuth(): GetUserByName: %s", err.Error())
-				c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("basicauth: getuserbyname: %w", err))
+				_ = c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("basicauth: getuserbyname: %w", err))
 				return
 			}
 			c.Set("userObj", u)
