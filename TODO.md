@@ -17,7 +17,7 @@ This "TODO" list covers migration from the 0.5.x J2EE backend for implementation
 - [X] getOutputMonths
 - [X] getOutputYears
 - [x] getPlugins
-- [ ] getPluginOptions
+- [X] getPluginOptions
 - [X] getProtocolVersion
 - [x] getStatus
 - [x] insertPayload

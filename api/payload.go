@@ -29,7 +29,7 @@ func (a Api) PayloadInsert(c *gin.Context) {
 		TransportOption string           `json:"transport_option"`
 	}
 
-	tag := fmt.Sprintf("apiPayloadInsert() [%s]: ", user)
+	tag := fmt.Sprintf("api.PayloadInsert() [%s]: ", user)
 
 	var raw inputPayload
 	if c.BindJSON(&raw) != nil {
@@ -59,7 +59,7 @@ func (a Api) PayloadInsert(c *gin.Context) {
 func (a Api) PayloadResubmit(c *gin.Context) {
 	user := c.MustGet(gin.AuthUserKey).(string)
 
-	tag := fmt.Sprintf("apiPayloadResubmit() [%s]: ", user)
+	tag := fmt.Sprintf("api.PayloadResubmit() [%s]: ", user)
 
 	id, err := common.ParamInt(c, "id")
 	if err != nil {

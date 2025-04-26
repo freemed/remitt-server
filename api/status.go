@@ -27,7 +27,7 @@ func (a Api) GetStatus(c *gin.Context) {
 
 	payloadID, err := common.ParamInt(c, "id")
 
-	tag := fmt.Sprintf("apiGetStatus(%d) [%s]: ", payloadID, user)
+	tag := fmt.Sprintf("api.GetStatus(%d) [%s]: ", payloadID, user)
 
 	if err != nil {
 		log.Print(tag + err.Error())
@@ -48,7 +48,7 @@ func (a Api) GetStatus(c *gin.Context) {
 func (a Api) GetBulkStatus(c *gin.Context) {
 	user := c.MustGet(gin.AuthUserKey).(string)
 
-	tag := fmt.Sprintf("apiGetBulkStatus() [%s]: ", user)
+	tag := fmt.Sprintf("api.GetBulkStatus() [%s]: ", user)
 
 	var ids []int64
 	err := c.BindJSON(&ids)

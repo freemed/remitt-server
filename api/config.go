@@ -19,7 +19,7 @@ func init() {
 
 func (a Api) ConfigGetAll(c *gin.Context) {
 	user := c.MustGet(gin.AuthUserKey).(string)
-	tag := fmt.Sprintf("ConfigGetAll(%s): ", user)
+	tag := fmt.Sprintf("api.ConfigGetAll(%s): ", user)
 	o, err := model.GetConfigValues(user)
 	if err != nil {
 		log.Print(tag + err.Error())
@@ -36,7 +36,7 @@ func (a Api) ConfigSetValue(c *gin.Context) {
 	option := c.Param("option")
 	value := c.Param("value")
 
-	tag := fmt.Sprintf("ConfigSetValue(%s,%s,%s) [%s]: ", namespace, option, value, user)
+	tag := fmt.Sprintf("api.ConfigSetValue(%s,%s,%s) [%s]: ", namespace, option, value, user)
 
 	err := model.SetConfigValue(user, namespace, option, []byte(value))
 	if err != nil {

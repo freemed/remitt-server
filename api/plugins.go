@@ -12,7 +12,8 @@ import (
 
 func init() {
 	common.ApiMap["plugins"] = func(r *gin.RouterGroup) {
-		r.GET("/:category", a.PluginsGetAll)
+		r.GET("/get/:category", a.PluginsGetAll)
+		r.GET("/options/:plugin", a.PluginGetOptions)
 	}
 }
 
@@ -20,7 +21,7 @@ func (a Api) PluginsGetAll(c *gin.Context) {
 	user := c.MustGet(gin.AuthUserKey).(string)
 	cat := c.Param("category")
 
-	tag := fmt.Sprintf("apiPluginsGetAll(%s) [%s]: ", cat, user)
+	tag := fmt.Sprintf("api.PluginsGetAll(%s) [%s]: ", cat, user)
 
 	switch cat {
 	case "validation":
@@ -37,6 +38,21 @@ func (a Api) PluginsGetAll(c *gin.Context) {
 	}
 
 	o, err := model.GetPluginsForCategory(cat)
+	if err != nil {
+		log.Print(tag + err.Error())
+		c.AbortWithError(http.StatusInternalServerError, err)
+		return
+	}
+	c.JSON(http.StatusOK, o)
+}
+
+func (a Api) PluginGetOptions(c *gin.Context) {
+	user := c.MustGet(gin.AuthUserKey).(string)
+	p := c.Param("plugin")
+
+	tag := fmt.Sprintf("api.PluginGetOptions(%s) [%s]: ", p, user)
+
+	o, err := model.GetPluginOptions(p)
 	if err != nil {
 		log.Print(tag + err.Error())
 		c.AbortWithError(http.StatusInternalServerError, err)

@@ -26,7 +26,7 @@ func (a Api) GetFile(c *gin.Context) {
 	category := c.Param("category")
 	filename := c.Param("filename")
 
-	tag := fmt.Sprintf("apiGetFile(%s,%s) [%s]: ", category, filename, user)
+	tag := fmt.Sprintf("api.GetFile(%s,%s) [%s]: ", category, filename, user)
 
 	if category == "" || filename == "" {
 		log.Print(tag + "Missing category or filename")
@@ -71,7 +71,7 @@ func (a Api) GetFileList(c *gin.Context) {
 	criteria := c.Param("criteria")
 	value := c.Param("value")
 
-	tag := fmt.Sprintf("apiGetFileList(%s,%s,%s) [%s]: ", category, criteria, value, user)
+	tag := fmt.Sprintf("api.GetFileList(%s,%s,%s) [%s]: ", category, criteria, value, user)
 
 	if category == "" || criteria == "" || value == "" {
 		log.Print(tag + "Missing category or criteria or value")
@@ -116,7 +116,7 @@ func (a Api) GetOutputMonths(c *gin.Context) {
 
 	year := c.Param("year")
 
-	tag := fmt.Sprintf("apiGetOutputMonths(%s) [%s]: ", year, user)
+	tag := fmt.Sprintf("api.GetOutputMonths(%s) [%s]: ", year, user)
 
 	if year == "" {
 		log.Print(tag + "Missing year")
@@ -143,7 +143,7 @@ func (a Api) GetOutputMonths(c *gin.Context) {
 func (a Api) GetOutputYears(c *gin.Context) {
 	user := c.MustGet(gin.AuthUserKey).(string)
 
-	tag := fmt.Sprintf("apiGetOutputYears() [%s]: ", user)
+	tag := fmt.Sprintf("api.GetOutputYears() [%s]: ", user)
 
 	query := "SELECT " +
 		"  DISTINCT(YEAR(stamp)) AS year " +

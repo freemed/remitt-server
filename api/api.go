@@ -3,6 +3,8 @@ package api
 import (
 	"net/http"
 
+	"slices"
+
 	"github.com/freemed/remitt-server/common"
 	"github.com/gin-gonic/gin"
 )
@@ -37,10 +39,8 @@ func (a Api) aclRequireRole(c *gin.Context, role string) {
 		c.AbortWithStatus(http.StatusNetworkAuthenticationRequired)
 	}
 
-	for _, x := range r.([]string) {
-		if x == role {
-			return
-		}
+	if slices.Contains(r.([]string), role) {
+		return
 	}
 	c.AbortWithStatus(http.StatusNetworkAuthenticationRequired)
 }
@@ -51,10 +51,5 @@ func (a Api) isAdmin(c *gin.Context) bool {
 		return false
 	}
 
-	for _, role := range r.([]string) {
-		if role == "admin" {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(r.([]string), "admin")
 }
