@@ -25,18 +25,18 @@ replace (
 
 require (
 	github.com/braintree/manners v0.0.0-20160418043613-82a8879fc5fd
-	github.com/freemed/remitt-server/api v0.0.0-20250404194731-e10125728bd5
-	github.com/freemed/remitt-server/common v0.0.0-20250404194731-e10125728bd5
-	github.com/freemed/remitt-server/config v0.0.0-20250404194731-e10125728bd5
-	github.com/freemed/remitt-server/jobqueue v0.0.0-20250404194731-e10125728bd5
-	github.com/freemed/remitt-server/model v0.0.0-20250404194731-e10125728bd5
+	github.com/freemed/remitt-server/api v0.0.0-20250408203712-6db141480e4c
+	github.com/freemed/remitt-server/common v0.0.0-20250408203712-6db141480e4c
+	github.com/freemed/remitt-server/config v0.0.0-20250408203712-6db141480e4c
+	github.com/freemed/remitt-server/jobqueue v0.0.0-20250408203712-6db141480e4c
+	github.com/freemed/remitt-server/model v0.0.0-20250408203712-6db141480e4c
 	github.com/gin-gonic/contrib v0.0.0-20250113154928-93b827325fec
 	github.com/gin-gonic/gin v1.10.0
 )
 
 require (
 	filippo.io/edwards25519 v1.1.0 // indirect
-	github.com/PuerkitoBio/goquery v1.10.2 // indirect
+	github.com/PuerkitoBio/goquery v1.10.3 // indirect
 	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/bytedance/sonic v1.13.2 // indirect
 	github.com/bytedance/sonic/loader v0.2.4 // indirect
@@ -49,10 +49,10 @@ require (
 	github.com/freemed/gokogiri/xml v0.0.0-20250402180648-1e651eb8ffcd // indirect
 	github.com/freemed/gokogiri/xpath v0.0.0-20250402180648-1e651eb8ffcd // indirect
 	github.com/freemed/ratago/xslt v0.0.0-20250203231425-016f1ea48158 // indirect
-	github.com/freemed/remitt-server/model/user v0.0.0-20250404194731-e10125728bd5 // indirect
-	github.com/freemed/remitt-server/translation v0.0.0-20250404194731-e10125728bd5 // indirect
-	github.com/freemed/remitt-server/transport v0.0.0-20250404194731-e10125728bd5 // indirect
-	github.com/gabriel-vasile/mimetype v1.4.8 // indirect
+	github.com/freemed/remitt-server/model/user v0.0.0-20250408203712-6db141480e4c // indirect
+	github.com/freemed/remitt-server/translation v0.0.0-20250408203712-6db141480e4c // indirect
+	github.com/freemed/remitt-server/transport v0.0.0-20250408203712-6db141480e4c // indirect
+	github.com/gabriel-vasile/mimetype v1.4.9 // indirect
 	github.com/gin-contrib/sse v1.1.0 // indirect
 	github.com/go-gorp/gorp v2.2.0+incompatible // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
