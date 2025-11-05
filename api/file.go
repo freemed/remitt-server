@@ -13,23 +13,23 @@ import (
 
 func init() {
 	common.ApiMap["file"] = func(r *gin.RouterGroup) {
-		r.GET("/get/:category/:filename", apiGetFile)
-		r.GET("/list/:category/:criteria/:value", apiGetFileList)
-		r.GET("/listgroups/year", apiGetOutputYears)
-		r.GET("/listgroups/month/:year", apiGetOutputMonths)
+		r.GET("/get/:category/:filename", a.GetFile)
+		r.GET("/list/:category/:criteria/:value", a.GetFileList)
+		r.GET("/listgroups/year", a.GetOutputYears)
+		r.GET("/listgroups/month/:year", a.GetOutputMonths)
 	}
 }
 
-func apiGetFile(c *gin.Context) {
+func (a Api) GetFile(c *gin.Context) {
 	user := c.MustGet(gin.AuthUserKey).(string)
 
 	category := c.Param("category")
 	filename := c.Param("filename")
 
-	tag := fmt.Sprintf("apiGetFile(%s,%s) [%s]: ", category, filename, user)
+	tag := fmt.Sprintf("api.GetFile(%s,%s) [%s]: ", category, filename, user)
 
 	if category == "" || filename == "" {
-		log.Printf(tag + "Missing category or filename")
+		log.Print(tag + "Missing category or filename")
 		c.AbortWithStatus(http.StatusBadRequest)
 		return
 	}
@@ -64,17 +64,17 @@ func apiGetFile(c *gin.Context) {
 	c.Data(http.StatusOK, contentType, o.Content)
 }
 
-func apiGetFileList(c *gin.Context) {
+func (a Api) GetFileList(c *gin.Context) {
 	user := c.MustGet(gin.AuthUserKey).(string)
 
 	category := c.Param("category")
 	criteria := c.Param("criteria")
 	value := c.Param("value")
 
-	tag := fmt.Sprintf("apiGetFileList(%s,%s,%s) [%s]: ", category, criteria, value, user)
+	tag := fmt.Sprintf("api.GetFileList(%s,%s,%s) [%s]: ", category, criteria, value, user)
 
 	if category == "" || criteria == "" || value == "" {
-		log.Printf(tag + "Missing category or criteria or value")
+		log.Print(tag + "Missing category or criteria or value")
 		c.AbortWithStatus(http.StatusBadRequest)
 		return
 	}
@@ -91,13 +91,10 @@ func apiGetFileList(c *gin.Context) {
 	switch strings.ToLower(criteria) {
 	case "month":
 		queryBase += " DATE_FORMAT(f.stamp, '%Y-%m') = ? " + ";"
-		break
 	case "year":
 		queryBase += " DATE_FORMAT(f.stamp, '%Y') = ? " + ";"
-		break
 	case "payload":
 		queryBase += " f.payloadId = ? " + ";"
-		break
 	default:
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("bad criteria %s", criteria))
 		return
@@ -114,15 +111,15 @@ func apiGetFileList(c *gin.Context) {
 	c.JSON(http.StatusOK, items)
 }
 
-func apiGetOutputMonths(c *gin.Context) {
+func (a Api) GetOutputMonths(c *gin.Context) {
 	user := c.MustGet(gin.AuthUserKey).(string)
 
 	year := c.Param("year")
 
-	tag := fmt.Sprintf("apiGetOutputMonths(%s) [%s]: ", year, user)
+	tag := fmt.Sprintf("api.GetOutputMonths(%s) [%s]: ", year, user)
 
 	if year == "" {
-		log.Printf(tag + "Missing year")
+		log.Print(tag + "Missing year")
 		c.AbortWithStatus(http.StatusBadRequest)
 		return
 	}
@@ -143,10 +140,10 @@ func apiGetOutputMonths(c *gin.Context) {
 	c.JSON(http.StatusOK, items)
 }
 
-func apiGetOutputYears(c *gin.Context) {
+func (a Api) GetOutputYears(c *gin.Context) {
 	user := c.MustGet(gin.AuthUserKey).(string)
 
-	tag := fmt.Sprintf("apiGetOutputYears() [%s]: ", user)
+	tag := fmt.Sprintf("api.GetOutputYears() [%s]: ", user)
 
 	query := "SELECT " +
 		"  DISTINCT(YEAR(stamp)) AS year " +

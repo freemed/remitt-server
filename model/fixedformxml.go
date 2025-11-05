@@ -29,7 +29,27 @@ type FixedFormPage struct {
 			} `xml:"offset"`
 		} `xml:"pdf"`
 	} `xml:"format"`
-	Elements []FixedElement `xml:"element"`
+	Elements FixedElements `xml:"element"`
+}
+
+type FixedElements []FixedElement
+
+func (s FixedElements) Swap(i, j int) {
+	s[i], s[j] = s[j], s[i]
+}
+
+func (s FixedElements) Less(i, j int) bool {
+	if s[i].Row != s[j].Row {
+		return s[i].Row < s[j].Row
+	}
+	if s[i].Column != s[j].Column {
+		return s[i].Column < s[j].Column
+	}
+	return false
+}
+
+func (s FixedElements) Len() int {
+	return len(s)
 }
 
 type FixedElement struct {

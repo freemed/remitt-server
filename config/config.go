@@ -1,7 +1,7 @@
 package config
 
 import (
-	"io/ioutil"
+	"os"
 
 	"gopkg.in/yaml.v2"
 )
@@ -18,7 +18,7 @@ type AppConfig struct {
 		User string `yaml:"user"`
 		Pass string `yaml:"pass"`
 		Host string `yaml:"host"`
-	} `yaml: "database"`
+	} `yaml:"database"`
 	Paths struct {
 		BasePath         string `yaml:"base"`
 		DbMigrationsPath string `yaml:"db-migrations"`
@@ -55,7 +55,7 @@ func (c *AppConfig) SetDefaults() {
 func LoadConfigWithDefaults(configPath string) (*AppConfig, error) {
 	c := &AppConfig{}
 	c.SetDefaults()
-	data, err := ioutil.ReadFile(configPath)
+	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return c, err
 	}

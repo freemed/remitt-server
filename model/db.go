@@ -34,7 +34,7 @@ func InitDb() *gorp.DbMap {
 
 	dbmap := &gorp.DbMap{
 		Db:      dbobj,
-		Dialect: gorp.MySQLDialect{"InnoDB", "UTF8"},
+		Dialect: gorp.MySQLDialect{Engine: "InnoDB", Encoding: "UTF8"},
 	}
 
 	//dbmap.AddTableWithName(MyUserModel{}, "users").SetKeys(true, "Id")

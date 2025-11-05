@@ -9,7 +9,7 @@ import (
 	"github.com/freemed/remitt-server/model"
 )
 
-func Test_TranslateFixedFormXmlPDF(t *testing.T) {
+func Test_TranslateFixedFormXML(t *testing.T) {
 	f, err := os.ReadFile("../test/fixedform.xml")
 	if err != nil {
 		t.Fatal(err.Error())
@@ -21,13 +21,13 @@ func Test_TranslateFixedFormXmlPDF(t *testing.T) {
 		t.Fatal(err.Error())
 	}
 
-	translator := &TranslateFixedFormPDF{TemplatePath: "../resources/pdf", Benchmark: true}
+	translator := &TranslateFixedFormXML{}
 	out, err := translator.Translate(obj)
 	if err != nil {
 		t.Fatal(err.Error())
 	}
 
-	log.Printf("Test_TranslateFixedFormXmlPDF(): Found %d bytes", len(out))
+	log.Printf("Test_TranslateFixedFormXmlXML(): Found %d bytes", len(out))
 
-	os.WriteFile("../test/fixedform.pdf", out, 0600)
+	os.WriteFile("../test/fixedform.txt", out, 0600)
 }

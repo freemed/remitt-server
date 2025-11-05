@@ -49,7 +49,10 @@ func main() {
 
 	if config.Config.Paths.TemporaryPath != "/tmp" {
 		log.Print("Ensuring temporary directory exists")
-		os.MkdirAll(config.Config.Paths.TemporaryPath, 0700)
+		err = os.MkdirAll(config.Config.Paths.TemporaryPath, 0o700)
+		if err != nil {
+			panic(err)
+		}
 	}
 
 	log.Printf("Initializing worker threads")

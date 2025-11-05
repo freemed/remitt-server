@@ -13,24 +13,23 @@ import (
 
 func init() {
 	common.ApiMap["payload"] = func(r *gin.RouterGroup) {
-		r.POST("/", apiPayloadInsert)
-		r.GET("/resubmit/:id", apiPayloadResubmit)
+		r.POST("/", a.PayloadInsert)
 	}
 }
 
-type inputPayload struct {
-	OriginalID      model.NullString `json:"original_id"`
-	InputPayload    string           `json:"input_payload"`
-	RenderPlugin    string           `json:"render_plugin"`
-	RenderOption    string           `json:"render_option"`
-	TransportPlugin string           `json:"transport_plugin"`
-	TransportOption string           `json:"transport_option"`
-}
-
-func apiPayloadInsert(c *gin.Context) {
+func (a Api) PayloadInsert(c *gin.Context) {
 	user := c.MustGet(gin.AuthUserKey).(string)
 
-	tag := fmt.Sprintf("apiPayloadInsert() [%s]: ", user)
+	type inputPayload struct {
+		OriginalID      model.NullString `json:"original_id"`
+		InputPayload    string           `json:"input_payload"`
+		RenderPlugin    string           `json:"render_plugin"`
+		RenderOption    string           `json:"render_option"`
+		TransportPlugin string           `json:"transport_plugin"`
+		TransportOption string           `json:"transport_option"`
+	}
+
+	tag := fmt.Sprintf("api.PayloadInsert() [%s]: ", user)
 
 	var raw inputPayload
 	if c.BindJSON(&raw) != nil {
@@ -57,10 +56,10 @@ func apiPayloadInsert(c *gin.Context) {
 	c.JSON(http.StatusOK, obj.Id)
 }
 
-func apiPayloadResubmit(c *gin.Context) {
+func (a Api) PayloadResubmit(c *gin.Context) {
 	user := c.MustGet(gin.AuthUserKey).(string)
 
-	tag := fmt.Sprintf("apiPayloadResubmit() [%s]: ", user)
+	tag := fmt.Sprintf("api.PayloadResubmit() [%s]: ", user)
 
 	id, err := common.ParamInt(c, "id")
 	if err != nil {

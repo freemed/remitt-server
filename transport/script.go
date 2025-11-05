@@ -109,7 +109,7 @@ func (s *Script) Transport(filename string, data any) error {
 	// Retrieve user from context
 	um, ok := user.FromContext(s.ctx)
 	if !ok {
-		return fmt.Errorf("unable to retrieve user from context")
+		return fmt.Errorf("script: unable to retrieve user from context")
 	}
 
 	// Load script from string
@@ -119,7 +119,7 @@ func (s *Script) Transport(filename string, data any) error {
 	js.Initialize()
 
 	if s.script == "" {
-		return fmt.Errorf("no script option given")
+		return fmt.Errorf("script: no script option given")
 	}
 
 	// Import the data passed via interface

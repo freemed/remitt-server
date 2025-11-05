@@ -3,7 +3,6 @@ package jobqueue
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"strconv"
@@ -130,7 +129,7 @@ func (o *JobQueueItem) Fail(err error) {
 
 func (o *JobQueueItem) Render() (out []byte, err error) {
 	// Create temporary
-	inxml, err := ioutil.TempFile(config.Config.Paths.TemporaryPath, "render-in")
+	inxml, err := os.CreateTemp(config.Config.Paths.TemporaryPath, "render-in")
 	if err != nil {
 		log.Printf("Render(): %s", err.Error())
 		return
@@ -142,7 +141,7 @@ func (o *JobQueueItem) Render() (out []byte, err error) {
 		return
 	}
 
-	outxml, err := ioutil.TempFile(config.Config.Paths.TemporaryPath, "render-out")
+	outxml, err := os.CreateTemp(config.Config.Paths.TemporaryPath, "render-out")
 	if err != nil {
 		log.Printf("Render(): %s", err.Error())
 		return
@@ -158,7 +157,7 @@ func (o *JobQueueItem) Render() (out []byte, err error) {
 
 	// Bring data back in by reading again
 	outxml.Close()
-	out, err = ioutil.ReadFile(outxml.Name())
+	out, err = os.ReadFile(outxml.Name())
 	os.Remove(outxml.Name())
 	return
 }
@@ -291,45 +290,53 @@ func executeJob(w *JobQueueItem) error {
 	u, err := model.GetUserByName(w.User)
 	if err != nil {
 		log.Printf("executeJob(): %s", err.Error())
-		return err
+		return fmt.Errorf("executejob: getuserbyname: %w", err)
 	}
 	ctx := user.NewContext(context.Background(), &u)
 
 	// Render
-	inxml, err := ioutil.TempFile(config.Config.Paths.TemporaryPath, "render-in")
+	inxml, err := os.CreateTemp(config.Config.Paths.TemporaryPath, "render-in")
 	if err != nil {
 		log.Printf(tag+"%s", err.Error())
-		return err
+		return fmt.Errorf("executejob: createtemp: %w", err)
 	}
 	defer os.Remove(inxml.Name())
-	outxml, err := ioutil.TempFile(config.Config.Paths.TemporaryPath, "render-out")
+	outxml, err := os.CreateTemp(config.Config.Paths.TemporaryPath, "render-out")
 	if err != nil {
 		log.Printf("executeJob(): %s", err.Error())
-		return err
+		return fmt.Errorf("executejob: createtemp: %w", err)
 	}
 	defer os.Remove(outxml.Name())
 	xslfile := config.Config.Paths.BasePath + string(os.PathSeparator) + "resources" + string(os.PathSeparator) + "xsl" + string(os.PathSeparator) + w.RenderOption + ".xsl"
 	if config.Config.InternalXslt {
 		err = common.XslTransformInternal(inxml.Name(), xslfile, outxml.Name(), map[string]string{})
+		if err != nil {
+			w.Fail(err)
+			return fmt.Errorf("executejob: xsl[internal]: %w", err)
+		}
 	} else {
 		err = common.XslTransformExternal(inxml.Name(), xslfile, outxml.Name(), map[string]string{})
+		if err != nil {
+			w.Fail(err)
+			return fmt.Errorf("executejob: xsl[external]: %w", err)
+		}
 	}
 	err = outxml.Close()
 	if err != nil {
 		w.Fail(err)
-		return err
+		return fmt.Errorf("executejob: close: %w", err)
 	}
-	renderedData, err := ioutil.ReadFile(outxml.Name())
+	renderedData, err := os.ReadFile(outxml.Name())
 	if err != nil {
 		w.Fail(err)
-		return err
+		return fmt.Errorf("executejob: readfile: %w", err)
 	}
 
 	// Instantiate transport plugin
 	transportPlugin, err := transport.InstantiateTransporter(w.TransportPlugin)
 	if err != nil {
 		w.Fail(err)
-		return err
+		return fmt.Errorf("executejob: instantiatetransporter: %w", err)
 	}
 	// Pass context to transport plugin
 	transportPlugin.SetContext(ctx)
@@ -338,7 +345,7 @@ func executeJob(w *JobQueueItem) error {
 	translationPluginName, err := translation.ResolveTranslator(w.RenderOption, transportPlugin.InputFormat())
 	if err != nil {
 		w.Fail(err)
-		return err
+		return fmt.Errorf("executejob: resol;vetranslator: %w", err)
 	}
 	log.Printf(tag+"Resolved plugin %s for %s -> %s", translationPluginName, w.RenderOption, transportPlugin.InputFormat())
 
@@ -346,7 +353,7 @@ func executeJob(w *JobQueueItem) error {
 	translationPlugin, err := translation.InstantiateTranslator(translationPluginName)
 	if err != nil {
 		w.Fail(err)
-		return err
+		return fmt.Errorf("executejob: instantiatetranslator: %w", err)
 	}
 	// Pass context to translation plugin
 	translationPlugin.SetContext(ctx)
@@ -355,26 +362,21 @@ func executeJob(w *JobQueueItem) error {
 	translatedData, err := translationPlugin.Translate(renderedData)
 	if err != nil {
 		w.Fail(err)
-		return err
+		return fmt.Errorf("executejob: translate: %w", err)
 	}
 
 	var ext string
 	switch transportPlugin.InputFormat() {
 	case "txt":
 		ext = "txt"
-		break
 	case "text":
 		ext = "txt"
-		break
 	case "x12":
 		ext = "x12"
-		break
 	case "pdf":
 		ext = "pdf"
-		break
 	default:
 		ext = "txt"
-		break
 	}
 	fn := fmt.Sprintf("%d.%s", time.Now().UnixNano(), ext)
 	log.Printf(tag+"Using filename %s", fn)
@@ -383,7 +385,7 @@ func executeJob(w *JobQueueItem) error {
 	err = transportPlugin.Transport(fn, translatedData)
 	if err != nil {
 		w.Fail(err)
-		return err
+		return fmt.Errorf("executejob: transport: %w", err)
 	}
 
 	w.Finish()

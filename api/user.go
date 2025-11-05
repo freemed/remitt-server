@@ -10,17 +10,20 @@ import (
 
 func init() {
 	common.ApiMap["currentuser"] = func(r *gin.RouterGroup) {
-		r.GET("/", apiGetUsername)
-		r.POST("/password", apiChangePassword)
+		r.GET("/", a.GetUsername)
+		r.POST("/password", a.ChangePassword)
+	}
+	common.ApiMap["user"] = func(r *gin.RouterGroup) {
+		r.GET("/list", a.UserList)
 	}
 }
 
-func apiGetUsername(c *gin.Context) {
+func (a Api) GetUsername(c *gin.Context) {
 	user := c.MustGet(gin.AuthUserKey).(string)
 	c.JSON(http.StatusOK, user)
 }
 
-func apiChangePassword(c *gin.Context) {
+func (a Api) ChangePassword(c *gin.Context) {
 	user := c.MustGet(gin.AuthUserKey).(string)
 	var pass string
 	err := c.BindJSON(&pass)
@@ -34,4 +37,17 @@ func apiChangePassword(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, user)
+}
+
+func (a Api) UserList(c *gin.Context) {
+	a.aclRequireRole(c, "admin")
+
+	o := []string{}
+	_, err := model.DbMap.Select(&o, "SELECT username FROM "+model.TABLE_USER+" ORDER BY username")
+	if err != nil {
+		c.AbortWithError(http.StatusInternalServerError, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, o)
 }

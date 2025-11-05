@@ -17,11 +17,11 @@ This "TODO" list covers migration from the 0.5.x J2EE backend for implementation
 - [X] getOutputMonths
 - [X] getOutputYears
 - [x] getPlugins
-- [ ] getPluginOptions
+- [X] getPluginOptions
 - [X] getProtocolVersion
 - [x] getStatus
 - [x] insertPayload
-- [ ] listRemittUsers
+- [X] listRemittUsers
 - [ ] parseData
 - [x] resubmitPayload
 - [x] setConfigValue
@@ -29,7 +29,7 @@ This "TODO" list covers migration from the 0.5.x J2EE backend for implementation
 
 ## BACKEND
 
-- [ ] Access control roles
+- [X] Access control roles
 - [ ] Callback support
   - [ ] getProtocolVersion
   - [ ] sendRemittancePayload
@@ -54,13 +54,13 @@ This "TODO" list covers migration from the 0.5.x J2EE backend for implementation
 - [ ] Translation plugins
   - [X] Import PDF overlay logic from [go fpdf port](https://github.com/jung-kurt/gofpdf)
   - [X] FixedFormPdf
-  - [ ] FixedFormXml
+  - [X] FixedFormXml
   - [X] X12Passthrough
   - [X] X12Xml
 - [ ] Transport plugins
   - [X] Javascript scripting with [otto](https://github.com/robertkrimen/otto) for scripting
   - [X] SFTP support with [sftp](https://github.com/pkg/sftp)
-  - [ ] Web-scraping / automation with [goquery](https://github.com/PuerkitoBio/goquery)
+  - [X] Web-scraping / automation with [goquery](https://github.com/PuerkitoBio/goquery)
   - [ ] ClaimLogic
   - [ ] Gateway EDI
   - [ ] StoreFile

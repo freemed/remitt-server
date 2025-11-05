@@ -3,12 +3,12 @@ module github.com/freemed/remitt-server
 go 1.24.0
 
 replace (
-	github.com/freemed/gokogiri/help => ../gokogiri/help
-	github.com/freemed/gokogiri/util => ../gokogiri/util
-	github.com/freemed/gokogiri/xml => ../gokogiri/xml
-	github.com/freemed/gokogiri/xpath => ../gokogiri/xpath
-	github.com/freemed/ratago => ../ratago
-	github.com/freemed/ratago/xslt => ../ratago/xslt
+	//github.com/freemed/gokogiri/help => ../gokogiri/help
+	//github.com/freemed/gokogiri/util => ../gokogiri/util
+	//github.com/freemed/gokogiri/xml => ../gokogiri/xml
+	//github.com/freemed/gokogiri/xpath => ../gokogiri/xpath
+	//github.com/freemed/ratago => ../ratago
+	//github.com/freemed/ratago/xslt => ../ratago/xslt
 	github.com/freemed/remitt-server => ./
 	github.com/freemed/remitt-server/api => ./api
 	github.com/freemed/remitt-server/client => ./client
@@ -34,6 +34,8 @@ require (
 
 require (
 	filippo.io/edwards25519 v1.1.0 // indirect
+	github.com/PuerkitoBio/goquery v1.10.3 // indirect
+	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/bytedance/gopkg v0.1.3 // indirect
 	github.com/bytedance/sonic v1.14.2 // indirect
 	github.com/bytedance/sonic/loader v0.4.0 // indirect
