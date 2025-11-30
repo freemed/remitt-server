@@ -11,7 +11,7 @@ replace (
 )
 
 require (
-	github.com/freemed/remitt-server/model v0.0.0-20250426185610-9806fa8d280d
+	github.com/freemed/remitt-server/model v0.0.0-20251105151329-d7601a90921e
 	github.com/orcaman/writerseeker v0.0.0-20200621085525-1d3f536ff85e
 	github.com/phpdave11/gofpdf v1.4.3
 )
@@ -27,9 +27,9 @@ require (
 	github.com/freemed/gokogiri/util v0.0.0-20250831182455-de8ad4878374 // indirect
 	github.com/freemed/gokogiri/xml v0.0.0-20250831182455-de8ad4878374 // indirect
 	github.com/freemed/gokogiri/xpath v0.0.0-20250831182455-de8ad4878374 // indirect
-	github.com/freemed/ratago/xslt v0.0.0-20250831182729-e19658c30a29 // indirect
-	github.com/freemed/remitt-server/common v0.0.0-20250426185610-9806fa8d280d // indirect
-	github.com/freemed/remitt-server/config v0.0.0-20250426185610-9806fa8d280d // indirect
+	github.com/freemed/ratago/xslt v0.0.0-20251105151549-80fda038dff4 // indirect
+	github.com/freemed/remitt-server/common v0.0.0-20251105151329-d7601a90921e // indirect
+	github.com/freemed/remitt-server/config v0.0.0-20251105151329-d7601a90921e // indirect
 	github.com/gabriel-vasile/mimetype v1.4.11 // indirect
 	github.com/gin-contrib/sse v1.1.0 // indirect
 	github.com/gin-gonic/gin v1.11.0 // indirect
@@ -39,7 +39,7 @@ require (
 	github.com/go-playground/validator/v10 v10.28.0 // indirect
 	github.com/go-sql-driver/mysql v1.9.3 // indirect
 	github.com/goccy/go-json v0.10.5 // indirect
-	github.com/goccy/go-yaml v1.18.0 // indirect
+	github.com/goccy/go-yaml v1.19.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
@@ -51,18 +51,18 @@ require (
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/phpdave11/gofpdi v1.0.15 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
-	github.com/quic-go/qpack v0.5.1 // indirect
-	github.com/quic-go/quic-go v0.55.0 // indirect
+	github.com/quic-go/qpack v0.6.0 // indirect
+	github.com/quic-go/quic-go v0.57.1 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.3.1 // indirect
-	golang.org/x/arch v0.22.0 // indirect
-	golang.org/x/crypto v0.43.0 // indirect
-	golang.org/x/mod v0.29.0 // indirect
-	golang.org/x/net v0.46.0 // indirect
-	golang.org/x/sync v0.17.0 // indirect
-	golang.org/x/sys v0.37.0 // indirect
-	golang.org/x/text v0.30.0 // indirect
-	golang.org/x/tools v0.38.0 // indirect
+	golang.org/x/arch v0.23.0 // indirect
+	golang.org/x/crypto v0.45.0 // indirect
+	golang.org/x/mod v0.30.0 // indirect
+	golang.org/x/net v0.47.0 // indirect
+	golang.org/x/sync v0.18.0 // indirect
+	golang.org/x/sys v0.38.0 // indirect
+	golang.org/x/text v0.31.0 // indirect
+	golang.org/x/tools v0.39.0 // indirect
 	google.golang.org/protobuf v1.36.10 // indirect
 	gopkg.in/alexcesaro/quotedprintable.v3 v3.0.0-20150716171945-2caba252f4dc // indirect
 	gopkg.in/gomail.v2 v2.0.0-20160411212932-81ebce5c23df // indirect
