@@ -1,4 +1,4 @@
-remitt-server
+cmd/remitt-server/remitt-server
 test/*.pdf
 test/*.x12
 test/*.txt

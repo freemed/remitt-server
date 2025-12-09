@@ -9,8 +9,8 @@ replace (
 )
 
 require (
-	github.com/freemed/remitt-server/common v0.0.0-20251105151329-d7601a90921e
-	github.com/freemed/remitt-server/config v0.0.0-20251105151329-d7601a90921e
+	github.com/freemed/remitt-server/common v0.0.0-20251130224621-3d8559a9abcf
+	github.com/freemed/remitt-server/config v0.0.0-20251130224621-3d8559a9abcf
 	github.com/go-gorp/gorp v2.2.0+incompatible
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/mattes/migrate v3.0.1+incompatible
@@ -28,11 +28,11 @@ require (
 	github.com/docker/docker v1.13.1 // indirect
 	github.com/docker/go-connections v0.4.0 // indirect
 	github.com/docker/go-units v0.4.0 // indirect
-	github.com/freemed/gokogiri/help v0.0.0-20250831182455-de8ad4878374 // indirect
-	github.com/freemed/gokogiri/util v0.0.0-20250831182455-de8ad4878374 // indirect
-	github.com/freemed/gokogiri/xml v0.0.0-20250831182455-de8ad4878374 // indirect
-	github.com/freemed/gokogiri/xpath v0.0.0-20250831182455-de8ad4878374 // indirect
-	github.com/freemed/ratago/xslt v0.0.0-20251105151549-80fda038dff4 // indirect
+	github.com/freemed/gokogiri/help v0.0.0-20251130225105-1c0457d97f4b // indirect
+	github.com/freemed/gokogiri/util v0.0.0-20251130225105-1c0457d97f4b // indirect
+	github.com/freemed/gokogiri/xml v0.0.0-20251130225105-1c0457d97f4b // indirect
+	github.com/freemed/gokogiri/xpath v0.0.0-20251130225105-1c0457d97f4b // indirect
+	github.com/freemed/ratago/xslt v0.0.0-20251130224444-ff8869104a5d // indirect
 	github.com/gabriel-vasile/mimetype v1.4.11 // indirect
 	github.com/gin-contrib/sse v1.1.0 // indirect
 	github.com/gin-gonic/gin v1.11.0 // indirect
