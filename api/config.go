@@ -7,30 +7,29 @@ import (
 
 	"github.com/freemed/remitt-server/common"
 	"github.com/freemed/remitt-server/model"
-	"github.com/gin-gonic/gin"
+	"github.com/labstack/echo/v5"
 )
 
 func init() {
-	common.ApiMap["config"] = func(r *gin.RouterGroup) {
-		r.GET("/all", a.ConfigGetAll)
-		r.POST("/set/:namespace/:option/:value", a.ConfigSetValue)
+	common.ApiMap["config"] = func(g *echo.Group) {
+		g.GET("/all", a.ConfigGetAll)
+		g.POST("/set/:namespace/:option/:value", a.ConfigSetValue)
 	}
 }
 
-func (a Api) ConfigGetAll(c *gin.Context) {
-	user := c.MustGet(gin.AuthUserKey).(string)
+func (a Api) ConfigGetAll(c *echo.Context) error {
+	user := c.Get(common.AuthUserKey).(string)
 	tag := fmt.Sprintf("api.ConfigGetAll(%s): ", user)
 	o, err := model.GetConfigValues(user)
 	if err != nil {
 		log.Print(tag + err.Error())
-		c.AbortWithError(http.StatusInternalServerError, err)
-		return
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
-	c.JSON(http.StatusOK, o)
+	return c.JSON(http.StatusOK, o)
 }
 
-func (a Api) ConfigSetValue(c *gin.Context) {
-	user := c.MustGet(gin.AuthUserKey).(string)
+func (a Api) ConfigSetValue(c *echo.Context) error {
+	user := c.Get(common.AuthUserKey).(string)
 
 	namespace := c.Param("namespace")
 	option := c.Param("option")
@@ -41,8 +40,7 @@ func (a Api) ConfigSetValue(c *gin.Context) {
 	err := model.SetConfigValue(user, namespace, option, []byte(value))
 	if err != nil {
 		log.Print(tag + err.Error())
-		c.AbortWithError(http.StatusInternalServerError, err)
-		return
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
-	c.JSON(http.StatusOK, true)
+	return c.JSON(http.StatusOK, true)
 }

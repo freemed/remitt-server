@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/labstack/echo/v5"
 )
 
 var (
@@ -39,12 +39,12 @@ func JsonEncode(o any) []byte {
 	return b
 }
 
-func BodyFromContext(c *gin.Context) ([]byte, error) {
-	defer c.Request.Body.Close()
-	return io.ReadAll(c.Request.Body)
+func BodyFromContext(c *echo.Context) ([]byte, error) {
+	defer c.Request().Body.Close()
+	return io.ReadAll(c.Request().Body)
 }
 
-func ParamInt(c *gin.Context, param string) (int64, error) {
+func ParamInt(c *echo.Context, param string) (int64, error) {
 	p := c.Param(param)
 	if p == "" {
 		return int64(0), errors.New("bad parameter")
@@ -52,7 +52,7 @@ func ParamInt(c *gin.Context, param string) (int64, error) {
 	return strconv.ParseInt(p, 10, 64)
 }
 
-func ParamMustInt(c *gin.Context, param string) int64 {
+func ParamMustInt(c *echo.Context, param string) int64 {
 	p := c.Param(param)
 	if p == "" {
 		return int64(0)

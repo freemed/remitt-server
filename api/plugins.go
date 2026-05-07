@@ -7,18 +7,18 @@ import (
 
 	"github.com/freemed/remitt-server/common"
 	"github.com/freemed/remitt-server/model"
-	"github.com/gin-gonic/gin"
+	"github.com/labstack/echo/v5"
 )
 
 func init() {
-	common.ApiMap["plugins"] = func(r *gin.RouterGroup) {
-		r.GET("/get/:category", a.PluginsGetAll)
-		r.GET("/options/:plugin", a.PluginGetOptions)
+	common.ApiMap["plugins"] = func(g *echo.Group) {
+		g.GET("/get/:category", a.PluginsGetAll)
+		g.GET("/options/:plugin", a.PluginGetOptions)
 	}
 }
 
-func (a Api) PluginsGetAll(c *gin.Context) {
-	user := c.MustGet(gin.AuthUserKey).(string)
+func (a Api) PluginsGetAll(c *echo.Context) error {
+	user := c.Get(common.AuthUserKey).(string)
 	cat := c.Param("category")
 
 	tag := fmt.Sprintf("api.PluginsGetAll(%s) [%s]: ", cat, user)
@@ -33,21 +33,19 @@ func (a Api) PluginsGetAll(c *gin.Context) {
 		break
 	default:
 		log.Printf(tag+"Could not find plugins for category %s", cat)
-		c.AbortWithStatus(http.StatusBadRequest)
-		return
+		return echo.NewHTTPError(http.StatusBadRequest, http.StatusText(http.StatusBadRequest))
 	}
 
 	o, err := model.GetPluginsForCategory(cat)
 	if err != nil {
 		log.Print(tag + err.Error())
-		c.AbortWithError(http.StatusInternalServerError, err)
-		return
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
-	c.JSON(http.StatusOK, o)
+	return c.JSON(http.StatusOK, o)
 }
 
-func (a Api) PluginGetOptions(c *gin.Context) {
-	user := c.MustGet(gin.AuthUserKey).(string)
+func (a Api) PluginGetOptions(c *echo.Context) error {
+	user := c.Get(common.AuthUserKey).(string)
 	p := c.Param("plugin")
 
 	tag := fmt.Sprintf("api.PluginGetOptions(%s) [%s]: ", p, user)
@@ -55,8 +53,7 @@ func (a Api) PluginGetOptions(c *gin.Context) {
 	o, err := model.GetPluginOptions(p)
 	if err != nil {
 		log.Print(tag + err.Error())
-		c.AbortWithError(http.StatusInternalServerError, err)
-		return
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
-	c.JSON(http.StatusOK, o)
+	return c.JSON(http.StatusOK, o)
 }

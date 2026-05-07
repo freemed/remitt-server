@@ -7,13 +7,13 @@ import (
 
 	"github.com/freemed/remitt-server/common"
 	"github.com/freemed/remitt-server/model"
-	"github.com/gin-gonic/gin"
+	"github.com/labstack/echo/v5"
 )
 
 func init() {
-	common.ApiMap["status"] = func(r *gin.RouterGroup) {
-		r.GET("/:id", a.GetStatus)
-		r.POST("/bulk/", a.GetBulkStatus)
+	common.ApiMap["status"] = func(g *echo.Group) {
+		g.GET("/:id", a.GetStatus)
+		g.POST("/bulk/", a.GetBulkStatus)
 	}
 }
 
@@ -22,8 +22,8 @@ type getStatusResult struct {
 	Stage  string `db:"stage" json:"stage"`
 }
 
-func (a Api) GetStatus(c *gin.Context) {
-	user := c.MustGet(gin.AuthUserKey).(string)
+func (a Api) GetStatus(c *echo.Context) error {
+	user := c.Get(common.AuthUserKey).(string)
 
 	payloadID, err := common.ParamInt(c, "id")
 
@@ -31,31 +31,28 @@ func (a Api) GetStatus(c *gin.Context) {
 
 	if err != nil {
 		log.Print(tag + err.Error())
-		c.AbortWithError(http.StatusBadRequest, err)
-		return
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 
 	var obj getStatusResult
 	err = model.DbMap.SelectOne(&obj, "CALL p_Status( ?, ? );", user, payloadID)
 	if err != nil {
 		log.Print(tag + err.Error())
-		c.AbortWithError(http.StatusInternalServerError, err)
-		return
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
-	c.JSON(http.StatusOK, obj)
+	return c.JSON(http.StatusOK, obj)
 }
 
-func (a Api) GetBulkStatus(c *gin.Context) {
-	user := c.MustGet(gin.AuthUserKey).(string)
+func (a Api) GetBulkStatus(c *echo.Context) error {
+	user := c.Get(common.AuthUserKey).(string)
 
 	tag := fmt.Sprintf("api.GetBulkStatus() [%s]: ", user)
 
 	var ids []int64
-	err := c.BindJSON(&ids)
+	err := c.Bind(&ids)
 	if err != nil {
 		log.Print(tag + err.Error())
-		c.AbortWithError(http.StatusBadRequest, err)
-		return
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 
 	out := map[int64]getStatusResult{}
@@ -68,5 +65,5 @@ func (a Api) GetBulkStatus(c *gin.Context) {
 		}
 		out[id] = obj
 	}
-	c.JSON(http.StatusOK, out)
+	return c.JSON(http.StatusOK, out)
 }

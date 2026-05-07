@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -8,14 +9,13 @@ import (
 	"os"
 	"strings"
 
-	"github.com/braintree/manners"
 	_ "github.com/freemed/remitt-server/api"
 	"github.com/freemed/remitt-server/common"
 	"github.com/freemed/remitt-server/config"
 	"github.com/freemed/remitt-server/jobqueue"
 	"github.com/freemed/remitt-server/model"
-	"github.com/gin-gonic/contrib/gzip"
-	"github.com/gin-gonic/gin"
+	"github.com/labstack/echo/v5"
+	"github.com/labstack/echo/v5/middleware"
 )
 
 var (
@@ -40,8 +40,6 @@ func main() {
 	if *debug {
 		log.Print("Overriding existing debug configuration")
 		config.Config.Debug = true
-	} else {
-		gin.SetMode(gin.ReleaseMode)
 	}
 
 	log.Print("Initializing database backend")
@@ -59,24 +57,41 @@ func main() {
 	jobqueue.StartDispatcher(config.Config.TimingIterations.NumWorkerThreads)
 
 	log.Print("Initializing web services")
-	m := gin.New()
-	m.Use(gin.Logger())
-	m.Use(gin.Recovery())
-	m.Use(BasicAuth(model.BasicAuthCallback, "REMITT"))
+	e := echo.New()
+
+	e.HTTPErrorHandler = func(c *echo.Context, err error) {
+		var he *echo.HTTPError
+		if errors.As(err, &he) {
+			_ = c.JSON(he.Code, map[string]interface{}{
+				"error": he.Message,
+			})
+		} else {
+			_ = c.JSON(http.StatusInternalServerError, map[string]interface{}{
+				"error": err.Error(),
+			})
+		}
+	}
+
+	e.Use(middleware.RequestLogger())
+	e.Use(middleware.Recover())
+	e.Use(middleware.BasicAuth(func(c *echo.Context, username, password string) (bool, error) {
+		return model.BasicAuthCallback(username, password), nil
+	}))
+	e.Use(LoadUserMiddleware())
 
 	// Enable gzip compression
-	m.Use(gzip.Gzip(gzip.DefaultCompression))
+	e.Use(middleware.Gzip())
 
 	// Serve up the static UI...
-	m.Static("/ui", "./ui")
-	m.StaticFile("/favicon.ico", "./ui/favicon.ico")
+	e.Static("/ui", "ui")
+	e.File("/favicon.ico", "ui/favicon.ico")
 
 	// ... with a redirection for the root page
-	m.GET("/", func(c *gin.Context) {
-		c.Redirect(http.StatusMovedPermanently, "./ui/index.html")
+	e.GET("/", func(c *echo.Context) error {
+		return c.Redirect(http.StatusMovedPermanently, "./ui/index.html")
 	})
 
-	a := m.Group("/api")
+	api := e.Group("/api")
 
 	// Iterate through initializing API maps
 	for k, v := range common.ApiMap {
@@ -84,10 +99,10 @@ func main() {
 		f = append(f, "AUTH")
 
 		log.Printf("Adding handler /api/%s [%s]", k, strings.Join(f, ","))
-		v(a.Group("/" + k))
+		v(api.Group("/" + k))
 	}
 
 	// HTTP
 	log.Printf("Launching http on port :%d", config.Config.Port)
-	log.Fatal(manners.ListenAndServe(fmt.Sprintf(":%d", config.Config.Port), m))
+	log.Fatal(e.Start(fmt.Sprintf(":%d", config.Config.Port)))
 }

@@ -8,20 +8,20 @@ import (
 
 	"github.com/freemed/remitt-server/common"
 	"github.com/freemed/remitt-server/model"
-	"github.com/gin-gonic/gin"
+	"github.com/labstack/echo/v5"
 )
 
 func init() {
-	common.ApiMap["file"] = func(r *gin.RouterGroup) {
-		r.GET("/get/:category/:filename", a.GetFile)
-		r.GET("/list/:category/:criteria/:value", a.GetFileList)
-		r.GET("/listgroups/year", a.GetOutputYears)
-		r.GET("/listgroups/month/:year", a.GetOutputMonths)
+	common.ApiMap["file"] = func(g *echo.Group) {
+		g.GET("/get/:category/:filename", a.GetFile)
+		g.GET("/list/:category/:criteria/:value", a.GetFileList)
+		g.GET("/listgroups/year", a.GetOutputYears)
+		g.GET("/listgroups/month/:year", a.GetOutputMonths)
 	}
 }
 
-func (a Api) GetFile(c *gin.Context) {
-	user := c.MustGet(gin.AuthUserKey).(string)
+func (a Api) GetFile(c *echo.Context) error {
+	user := c.Get(common.AuthUserKey).(string)
 
 	category := c.Param("category")
 	filename := c.Param("filename")
@@ -30,16 +30,14 @@ func (a Api) GetFile(c *gin.Context) {
 
 	if category == "" || filename == "" {
 		log.Print(tag + "Missing category or filename")
-		c.AbortWithStatus(http.StatusBadRequest)
-		return
+		return echo.NewHTTPError(http.StatusBadRequest, http.StatusText(http.StatusBadRequest))
 	}
 
 	var o model.FileStoreModel
 	err := model.DbMap.SelectOne(&o, "SELECT * FROM "+model.TABLE_FILE_STORE+" WHERE user = ? AND category = ? AND filename = ?", user, category, filename)
 	if err != nil {
 		log.Print(tag + err.Error())
-		c.AbortWithError(http.StatusInternalServerError, err)
-		return
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
 
 	// Clumsy content-type detection
@@ -61,11 +59,11 @@ func (a Api) GetFile(c *gin.Context) {
 		contentType = "application/octet-stream"
 	}
 
-	c.Data(http.StatusOK, contentType, o.Content)
+	return c.Blob(http.StatusOK, contentType, o.Content)
 }
 
-func (a Api) GetFileList(c *gin.Context) {
-	user := c.MustGet(gin.AuthUserKey).(string)
+func (a Api) GetFileList(c *echo.Context) error {
+	user := c.Get(common.AuthUserKey).(string)
 
 	category := c.Param("category")
 	criteria := c.Param("criteria")
@@ -75,8 +73,7 @@ func (a Api) GetFileList(c *gin.Context) {
 
 	if category == "" || criteria == "" || value == "" {
 		log.Print(tag + "Missing category or criteria or value")
-		c.AbortWithStatus(http.StatusBadRequest)
-		return
+		return echo.NewHTTPError(http.StatusBadRequest, http.StatusText(http.StatusBadRequest))
 	}
 
 	queryBase := "SELECT f.filename AS filename " +
@@ -96,23 +93,21 @@ func (a Api) GetFileList(c *gin.Context) {
 	case "payload":
 		queryBase += " f.payloadId = ? " + ";"
 	default:
-		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("bad criteria %s", criteria))
-		return
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("bad criteria %s", criteria))
 	}
 
 	var items []model.FileListItem
 	_, err := model.DbMap.Select(&items, queryBase, user, category, value)
 	if err != nil {
 		log.Print(tag + err.Error())
-		c.AbortWithError(http.StatusInternalServerError, err)
-		return
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
 
-	c.JSON(http.StatusOK, items)
+	return c.JSON(http.StatusOK, items)
 }
 
-func (a Api) GetOutputMonths(c *gin.Context) {
-	user := c.MustGet(gin.AuthUserKey).(string)
+func (a Api) GetOutputMonths(c *echo.Context) error {
+	user := c.Get(common.AuthUserKey).(string)
 
 	year := c.Param("year")
 
@@ -120,8 +115,7 @@ func (a Api) GetOutputMonths(c *gin.Context) {
 
 	if year == "" {
 		log.Print(tag + "Missing year")
-		c.AbortWithStatus(http.StatusBadRequest)
-		return
+		return echo.NewHTTPError(http.StatusBadRequest, http.StatusText(http.StatusBadRequest))
 	}
 
 	query := "SELECT DATE_FORMAT(stamp, '%Y-%m') AS m " +
@@ -133,15 +127,14 @@ func (a Api) GetOutputMonths(c *gin.Context) {
 	_, err := model.DbMap.Select(&items, query, user, year)
 	if err != nil {
 		log.Print(tag + err.Error())
-		c.AbortWithError(http.StatusInternalServerError, err)
-		return
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
 
-	c.JSON(http.StatusOK, items)
+	return c.JSON(http.StatusOK, items)
 }
 
-func (a Api) GetOutputYears(c *gin.Context) {
-	user := c.MustGet(gin.AuthUserKey).(string)
+func (a Api) GetOutputYears(c *echo.Context) error {
+	user := c.Get(common.AuthUserKey).(string)
 
 	tag := fmt.Sprintf("api.GetOutputYears() [%s]: ", user)
 
@@ -159,9 +152,8 @@ func (a Api) GetOutputYears(c *gin.Context) {
 	_, err := model.DbMap.Select(&items, query, user)
 	if err != nil {
 		log.Print(tag + err.Error())
-		c.AbortWithError(http.StatusInternalServerError, err)
-		return
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
 
-	c.JSON(http.StatusOK, items)
+	return c.JSON(http.StatusOK, items)
 }

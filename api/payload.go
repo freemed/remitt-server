@@ -8,17 +8,17 @@ import (
 
 	"github.com/freemed/remitt-server/common"
 	"github.com/freemed/remitt-server/model"
-	"github.com/gin-gonic/gin"
+	"github.com/labstack/echo/v5"
 )
 
 func init() {
-	common.ApiMap["payload"] = func(r *gin.RouterGroup) {
-		r.POST("/", a.PayloadInsert)
+	common.ApiMap["payload"] = func(g *echo.Group) {
+		g.POST("/", a.PayloadInsert)
 	}
 }
 
-func (a Api) PayloadInsert(c *gin.Context) {
-	user := c.MustGet(gin.AuthUserKey).(string)
+func (a Api) PayloadInsert(c *echo.Context) error {
+	user := c.Get(common.AuthUserKey).(string)
 
 	type inputPayload struct {
 		OriginalID      model.NullString `json:"original_id"`
@@ -32,9 +32,8 @@ func (a Api) PayloadInsert(c *gin.Context) {
 	tag := fmt.Sprintf("api.PayloadInsert() [%s]: ", user)
 
 	var raw inputPayload
-	if c.BindJSON(&raw) != nil {
-		c.AbortWithStatus(http.StatusBadRequest)
-		return
+	if err := c.Bind(&raw); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 
 	obj := model.PayloadModel{
@@ -50,36 +49,32 @@ func (a Api) PayloadInsert(c *gin.Context) {
 	err := model.DbMap.Insert(&obj)
 	if err != nil {
 		log.Print(tag + err.Error())
-		c.AbortWithError(http.StatusInternalServerError, err)
-		return
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
-	c.JSON(http.StatusOK, obj.Id)
+	return c.JSON(http.StatusOK, obj.Id)
 }
 
-func (a Api) PayloadResubmit(c *gin.Context) {
-	user := c.MustGet(gin.AuthUserKey).(string)
+func (a Api) PayloadResubmit(c *echo.Context) error {
+	user := c.Get(common.AuthUserKey).(string)
 
 	tag := fmt.Sprintf("api.PayloadResubmit() [%s]: ", user)
 
 	id, err := common.ParamInt(c, "id")
 	if err != nil {
 		log.Print(tag + err.Error())
-		c.AbortWithError(http.StatusBadRequest, err)
-		return
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 
 	obj, err := model.DbMap.Get(model.PayloadModel{}, id)
 	if err != nil {
 		log.Print(tag + err.Error())
-		c.AbortWithError(http.StatusInternalServerError, err)
-		return
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
 	payload := obj.(*model.PayloadModel)
 
 	if payload.User != user {
-		log.Printf(tag+"payload user is not correct : %s != %s", user, payload.User, user)
-		c.AbortWithStatus(http.StatusUnauthorized)
-		return
+		log.Printf(tag+"payload user is not correct : %s != %s", user, payload.User)
+		return echo.NewHTTPError(http.StatusUnauthorized, http.StatusText(http.StatusUnauthorized))
 	}
 
 	// Overload for insert
@@ -91,8 +86,7 @@ func (a Api) PayloadResubmit(c *gin.Context) {
 	err = model.DbMap.Insert(&payload)
 	if err != nil {
 		log.Print(tag + err.Error())
-		c.AbortWithError(http.StatusInternalServerError, err)
-		return
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
-	c.JSON(http.StatusOK, payload.Id)
+	return c.JSON(http.StatusOK, payload.Id)
 }

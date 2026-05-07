@@ -6,7 +6,7 @@ import (
 	"slices"
 
 	"github.com/freemed/remitt-server/common"
-	"github.com/gin-gonic/gin"
+	"github.com/labstack/echo/v5"
 )
 
 const (
@@ -23,31 +23,31 @@ type Api struct {
 }
 
 func init() {
-	common.ApiMap["ping"] = func(r *gin.RouterGroup) {
-		r.POST("/:text", a.Ping)
+	common.ApiMap["ping"] = func(g *echo.Group) {
+		g.POST("/:text", a.Ping)
 	}
 }
 
-func (a Api) Ping(c *gin.Context) {
-	c.JSON(http.StatusOK, c.Param("text"))
+func (a Api) Ping(c *echo.Context) error {
+	return c.JSON(http.StatusOK, c.Param("text"))
 }
 
 // aclRequireRole requires a certain role before it will grant access
-func (a Api) aclRequireRole(c *gin.Context, role string) {
-	r, exists := c.Get("roles")
-	if !exists {
-		c.AbortWithStatus(http.StatusNetworkAuthenticationRequired)
+func (a Api) aclRequireRole(c *echo.Context, role string) error {
+	r := c.Get("roles")
+	if r == nil {
+		return echo.NewHTTPError(http.StatusNetworkAuthenticationRequired, http.StatusText(http.StatusNetworkAuthenticationRequired))
 	}
 
 	if slices.Contains(r.([]string), role) {
-		return
+		return nil
 	}
-	c.AbortWithStatus(http.StatusNetworkAuthenticationRequired)
+	return echo.NewHTTPError(http.StatusNetworkAuthenticationRequired, http.StatusText(http.StatusNetworkAuthenticationRequired))
 }
 
-func (a Api) isAdmin(c *gin.Context) bool {
-	r, exists := c.Get("roles")
-	if !exists {
+func (a Api) isAdmin(c *echo.Context) bool {
+	r := c.Get("roles")
+	if r == nil {
 		return false
 	}
 

@@ -1,11 +1,13 @@
 package common
 
 import (
-	"github.com/gin-gonic/gin"
+	"github.com/labstack/echo/v5"
 )
+
+const AuthUserKey = "user"
 
 var (
 	ApiMap = map[string]ApiMapping{}
 )
 
-type ApiMapping func(*gin.RouterGroup)
+type ApiMapping func(*echo.Group)
