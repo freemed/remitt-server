@@ -46,7 +46,6 @@ require (
 	github.com/go-sql-driver/mysql v1.10.0 // indirect
 	github.com/kr/fs v0.1.0 // indirect
 	github.com/mattes/migrate v3.0.1+incompatible // indirect
-	github.com/mattn/go-sqlite3 v2.0.3+incompatible // indirect
 	github.com/orcaman/writerseeker v0.0.0-20200621085525-1d3f536ff85e // indirect
 	github.com/phpdave11/gofpdf v1.4.3 // indirect
 	github.com/phpdave11/gofpdi v1.0.16 // indirect
