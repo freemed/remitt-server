@@ -7,3 +7,5 @@ go.sum
 go.work.sum
 ui/node_modules
 ui/yarn.lock
+.hermes/
+remitt-server

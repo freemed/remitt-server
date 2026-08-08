@@ -9,6 +9,7 @@ replace (
 	github.com/freemed/remitt-server/config => ../config
 	github.com/freemed/remitt-server/model => ../model
 	github.com/freemed/remitt-server/model/user => ../model/user
+	github.com/freemed/remitt-server/render => ../render
 	github.com/freemed/remitt-server/translation => ../translation
 	github.com/freemed/remitt-server/transport => ../transport
 )
@@ -18,6 +19,7 @@ require (
 	github.com/freemed/remitt-server/config v0.0.0-20260409181504-5105c68ef4de
 	github.com/freemed/remitt-server/model v0.0.0-20260409181504-5105c68ef4de
 	github.com/freemed/remitt-server/model/user v0.0.0-20260409181504-5105c68ef4de
+	github.com/freemed/remitt-server/render v0.0.0-20260409181504-5105c68ef4de
 	github.com/freemed/remitt-server/translation v0.0.0-20260409181504-5105c68ef4de
 	github.com/freemed/remitt-server/transport v0.0.0-20260409181504-5105c68ef4de
 )

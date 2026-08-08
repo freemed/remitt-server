@@ -4,10 +4,6 @@ import (
 	"time"
 )
 
-const (
-	TABLE_SCOOPER = "tScooper"
-)
-
 type ScooperModel struct {
 	Id           int64     `db:"id"`
 	ScooperClass string    `db:"scooperClass"`
@@ -17,8 +13,4 @@ type ScooperModel struct {
 	Path         string    `db:"path"`
 	Filename     string    `db:"filename"`
 	Content      []byte    `db:"content"`
-}
-
-func init() {
-	DbTables = append(DbTables, DbTable{TableName: TABLE_SCOOPER, Obj: ScooperModel{}, Key: "Id"})
 }

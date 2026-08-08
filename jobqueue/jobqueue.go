@@ -13,6 +13,7 @@ import (
 	"github.com/freemed/remitt-server/config"
 	"github.com/freemed/remitt-server/model"
 	"github.com/freemed/remitt-server/model/user"
+	"github.com/freemed/remitt-server/render"
 	"github.com/freemed/remitt-server/translation"
 	"github.com/freemed/remitt-server/transport"
 )
@@ -94,8 +95,7 @@ func (o *JobQueueItem) AppendLog(item string) {
 	// Additionally set message to "last log item" automatically without timestamp
 	o.Message = item
 
-	// Journal updates to database
-	//go model.DbMap.Update(JobLogObjFromJobQueueItem(o))
+	// Journal updates to database (sqlc migration pending)
 
 	o.lock.Unlock()
 }
@@ -206,7 +206,7 @@ func (w Worker) Start() {
 				i.Lock()
 				i.Status = jobStatusMap[JobStatusRunning]
 				i.Started = model.NullTimeNow()
-				//go model.DbMap.Update(JobLogObjFromJobQueueItem(i))
+				// Journal update (sqlc migration pending)
 				i.Unlock()
 
 				// Actually process queue item
@@ -268,17 +268,6 @@ func processJobQueueItem(w *JobQueueItem) error {
 
 	// TODO: Validate
 
-	/*
-		model.DbMap.Insert(&model.LogObj{
-			LogTime: time.Now(),
-			User:    w.User,
-			Server:  w.System,
-			Domain:  w.Domain,
-			Product: w.Product,
-			Message: "Requested restart",
-		})
-	*/
-
 	err := executeJob(w)
 	return err
 }
@@ -295,41 +284,16 @@ func executeJob(w *JobQueueItem) error {
 	ctx := user.NewContext(context.Background(), &u)
 
 	// Render
-	inxml, err := os.CreateTemp(config.Config.Paths.TemporaryPath, "render-in")
-	if err != nil {
-		log.Printf(tag+"%s", err.Error())
-		return fmt.Errorf("executejob: createtemp: %w", err)
-	}
-	defer os.Remove(inxml.Name())
-	outxml, err := os.CreateTemp(config.Config.Paths.TemporaryPath, "render-out")
-	if err != nil {
-		log.Printf("executeJob(): %s", err.Error())
-		return fmt.Errorf("executejob: createtemp: %w", err)
-	}
-	defer os.Remove(outxml.Name())
-	xslfile := config.Config.Paths.BasePath + string(os.PathSeparator) + "resources" + string(os.PathSeparator) + "xsl" + string(os.PathSeparator) + w.RenderOption + ".xsl"
-	if config.Config.InternalXslt {
-		err = common.XslTransformInternal(inxml.Name(), xslfile, outxml.Name(), map[string]string{})
-		if err != nil {
-			w.Fail(err)
-			return fmt.Errorf("executejob: xsl[internal]: %w", err)
-		}
-	} else {
-		err = common.XslTransformExternal(inxml.Name(), xslfile, outxml.Name(), map[string]string{})
-		if err != nil {
-			w.Fail(err)
-			return fmt.Errorf("executejob: xsl[external]: %w", err)
-		}
-	}
-	err = outxml.Close()
+	renderPlugin, err := render.InstantiateRenderer(w.RenderPlugin)
 	if err != nil {
 		w.Fail(err)
-		return fmt.Errorf("executejob: close: %w", err)
+		return fmt.Errorf("executejob: renderplugin: %w", err)
 	}
-	renderedData, err := os.ReadFile(outxml.Name())
+	renderPlugin.SetContext(ctx)
+	renderedData, err := renderPlugin.Render(w.Payload, w.RenderOption)
 	if err != nil {
 		w.Fail(err)
-		return fmt.Errorf("executejob: readfile: %w", err)
+		return fmt.Errorf("executejob: render: %w", err)
 	}
 
 	// Instantiate transport plugin

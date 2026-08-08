@@ -4,14 +4,14 @@ This "TODO" list covers migration from the 0.5.x J2EE backend for implementation
 
 ## API
 
-- [ ] addKeyToKeyring
-- [ ] addRemittUser
-- [ ] batchEligibilityCheck
+- [X] addKeyToKeyring
+- [X] addRemittUser
+- [X] batchEligibilityCheck
 - [X] changePassword
 - [X] getBulkStatus
 - [x] getConfigValues
 - [x] getCurrentUsername
-- [ ] getEligibility
+- [X] getEligibility
 - [x] getFile
 - [x] getFileList
 - [X] getOutputMonths
@@ -22,10 +22,10 @@ This "TODO" list covers migration from the 0.5.x J2EE backend for implementation
 - [x] getStatus
 - [x] insertPayload
 - [X] listRemittUsers
-- [ ] parseData
+- [X] parseData [interface + API + X12 envelope parser done]
 - [x] resubmitPayload
 - [x] setConfigValue
-- [ ] validatePayload
+- [X] validatePayload
 
 ## BACKEND
 
@@ -33,24 +33,24 @@ This "TODO" list covers migration from the 0.5.x J2EE backend for implementation
 - [ ] Callback support
   - [ ] getProtocolVersion
   - [ ] sendRemittancePayload
-- [ ] Eligibility plugins
-  - [ ] Dummy
+- [X] Eligibility plugins
+  - [X] Dummy
   - [ ] Gateway EDI
   - [ ] NC Medicaid
   - [ ] SFTP
 - [X] Job queuing mechanism
-- [ ] Migrate queue polling logic to go channel logic
-- [ ] Parsing X12
-- [ ] PGP/GPG armoring for payloads
-- [ ] Render plugins
-  - [ ] PreRenderedPlugin
-  - [ ] XsltPlugin
-- [ ] Scooper plugins
-  - [ ] Gateway EDI
-  - [ ] SFTP
-- [ ] Task scheduler
-  - [ ] Eligibility task
-  - [ ] Scooper task
+- [X] Migrate queue polling logic to go channel logic [already channel-based]
+- [X] Parsing X12 [envelope + 835 parser + 14 DTOs done]
+- [X] PGP/GPG armoring for payloads
+- [X] Render plugins
+  - [X] PreRenderedPlugin
+  - [X] XsltPlugin
+- [X] Scooper plugins
+  - [X] Gateway EDI
+  - [X] SFTP
+- [X] Task scheduler
+  - [X] Eligibility task
+  - [X] Scooper task
 - [ ] Translation plugins
   - [X] Import PDF overlay logic from [go fpdf port](https://github.com/jung-kurt/gofpdf)
   - [X] FixedFormPdf
@@ -61,11 +61,11 @@ This "TODO" list covers migration from the 0.5.x J2EE backend for implementation
   - [X] Javascript scripting with [otto](https://github.com/robertkrimen/otto) for scripting
   - [X] SFTP support with [sftp](https://github.com/pkg/sftp)
   - [X] Web-scraping / automation with [goquery](https://github.com/PuerkitoBio/goquery)
-  - [ ] ClaimLogic
-  - [ ] Gateway EDI
-  - [ ] StoreFile
-  - [ ] StoreFilePdf
+  - [X] ClaimLogic
+  - [X] Gateway EDI
+  - [X] StoreFile
+  - [X] StoreFilePdf
 - [ ] Validation plugins
-  - [ ] X12 validation
+  - [X] X12 validation
 - [X] XSLT processing
 

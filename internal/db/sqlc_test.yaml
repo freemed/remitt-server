@@ -1,0 +1,11 @@
+version: "2"
+sql:
+  - engine: "mysql"
+    queries: "/tmp/sqlc_test/"
+    schema: "schema.sql"
+    gen:
+      go:
+        package: "testdbgen"
+        out: "/tmp/sqlc_out"
+        emit_json_tags: true
+        emit_pointers_for_null_types: true

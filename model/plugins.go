@@ -1,9 +1,8 @@
 package model
 
-import ()
-
-const (
-	TABLE_PLUGINS = "tPlugins"
+import (
+	"context"
+	"database/sql"
 )
 
 type PluginsModel struct {
@@ -15,12 +14,37 @@ type PluginsModel struct {
 	OutputFormat NullString `db:"outputFormat"`
 }
 
-func init() {
-	DbTables = append(DbTables, DbTable{TableName: TABLE_PLUGINS, Obj: PluginsModel{}, Key: ""})
+func GetPluginsForCategory(category string) ([]PluginsModel, error) {
+	rows, err := Queries.GetPluginsByCategory(context.Background(), category)
+	if err != nil {
+		return nil, err
+	}
+	o := make([]PluginsModel, len(rows))
+	for i, r := range rows {
+		o[i] = PluginsModel{
+			Plugin:       r.Plugin,
+			Version:      r.Version,
+			Author:       r.Author,
+			Category:     r.Category,
+			InputFormat:  nullStringFromSQL(r.Inputformat),
+			OutputFormat: nullStringFromSQL(r.Outputformat),
+		}
+	}
+	return o, nil
 }
 
-func GetPluginsForCategory(category string) ([]PluginsModel, error) {
-	var o []PluginsModel
-	_, err := DbMap.Select(&o, "SELECT * FROM "+TABLE_PLUGINS+" WHERE category = ?", category)
-	return o, err
+// nullStringFromSQL converts sql.NullString to model.NullString.
+func nullStringFromSQL(ns sql.NullString) NullString {
+	if ns.Valid {
+		return NewNullStringValue(ns.String)
+	}
+	return NullString{}
+}
+
+// nullStringToSQL converts model.NullString to sql.NullString.
+func nullStringToSQL(ns NullString) sql.NullString {
+	if ns.Valid {
+		return sql.NullString{String: ns.String, Valid: true}
+	}
+	return sql.NullString{}
 }

@@ -1,12 +1,14 @@
 package api
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
 	"log"
 	"net/http"
-	"time"
 
 	"github.com/freemed/remitt-server/common"
+	"github.com/freemed/remitt-server/internal/dbgen"
 	"github.com/freemed/remitt-server/model"
 	"github.com/labstack/echo/v5"
 )
@@ -46,12 +48,22 @@ func (a Api) PayloadInsert(c *echo.Context) error {
 		OriginalId:      raw.OriginalID,
 	}
 
-	err := model.DbMap.Insert(&obj)
+	params := dbgen.InsertPayloadParams{
+		User:            user,
+		Payload:         sql.NullString{String: string(obj.Payload), Valid: true},
+		RenderPlugin:    obj.RenderPlugin,
+		RenderOption:    obj.RenderOption,
+		TransportPlugin: obj.TransportPlugin,
+		TransportOption: sql.NullString{String: obj.TransportOption, Valid: obj.TransportOption != ""},
+		OriginalID:      sql.NullString{String: string(obj.OriginalId.String), Valid: obj.OriginalId.Valid},
+	}
+	result, err := model.Queries.InsertPayload(context.Background(), params)
 	if err != nil {
 		log.Print(tag + err.Error())
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
-	return c.JSON(http.StatusOK, obj.Id)
+	id, _ := result.LastInsertId()
+	return c.JSON(http.StatusOK, id)
 }
 
 func (a Api) PayloadResubmit(c *echo.Context) error {
@@ -65,28 +77,23 @@ func (a Api) PayloadResubmit(c *echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 
-	obj, err := model.DbMap.Get(model.PayloadModel{}, id)
+	p, err := model.Queries.GetPayloadById(context.Background(), id)
 	if err != nil {
 		log.Print(tag + err.Error())
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
-	payload := obj.(*model.PayloadModel)
 
-	if payload.User != user {
-		log.Printf(tag+"payload user is not correct : %s != %s", user, payload.User)
+	if p.User != user {
+		log.Printf(tag+"payload user is not correct : %s != %s", user, p.User)
 		return echo.NewHTTPError(http.StatusUnauthorized, http.StatusText(http.StatusUnauthorized))
 	}
 
-	// Overload for insert
-	payload.Id = 0
-	payload.InsertStamp = time.Now()
-	payload.PayloadState = model.PayloadStateValid
-
-	// Reinsert
-	err = model.DbMap.Insert(&payload)
+	params := dbgen.ResubmitPayloadParams{ID: id, User: user}
+	result, err := model.Queries.ResubmitPayload(context.Background(), params)
 	if err != nil {
 		log.Print(tag + err.Error())
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
-	return c.JSON(http.StatusOK, payload.Id)
+	newId, _ := result.LastInsertId()
+	return c.JSON(http.StatusOK, newId)
 }

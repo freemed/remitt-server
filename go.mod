@@ -11,14 +11,11 @@ replace (
 	//github.com/freemed/ratago/xslt => ../ratago/xslt
 	github.com/freemed/remitt-server => ./
 	github.com/freemed/remitt-server/api => ./api
-	github.com/freemed/remitt-server/client => ./client
 	github.com/freemed/remitt-server/common => ./common
 	github.com/freemed/remitt-server/config => ./config
 	github.com/freemed/remitt-server/jobqueue => ./jobqueue
 	github.com/freemed/remitt-server/model => ./model
-	github.com/freemed/remitt-server/model/user => ./model/user
-	github.com/freemed/remitt-server/translation => ./translation
-	github.com/freemed/remitt-server/transport => ./transport
+	github.com/freemed/remitt-server/render => ./render
 )
 
 require (
@@ -28,6 +25,9 @@ require (
 	github.com/freemed/remitt-server/jobqueue v0.0.0-20260409181504-5105c68ef4de
 	github.com/freemed/remitt-server/model v0.0.0-20260409181504-5105c68ef4de
 	github.com/labstack/echo/v5 v5.1.1
+	github.com/pkg/sftp v1.13.10
+	github.com/robertkrimen/otto v0.5.1
+	golang.org/x/crypto v0.50.0
 )
 
 require (
@@ -42,18 +42,13 @@ require (
 	github.com/freemed/remitt-server/model/user v0.0.0-20260409181504-5105c68ef4de // indirect
 	github.com/freemed/remitt-server/translation v0.0.0-20260409181504-5105c68ef4de // indirect
 	github.com/freemed/remitt-server/transport v0.0.0-20260409181504-5105c68ef4de // indirect
-	github.com/go-gorp/gorp v2.2.0+incompatible // indirect
 	github.com/go-sql-driver/mysql v1.10.0 // indirect
 	github.com/kr/fs v0.1.0 // indirect
 	github.com/mattes/migrate v3.0.1+incompatible // indirect
-	github.com/mattn/go-sqlite3 v2.0.3+incompatible // indirect
 	github.com/orcaman/writerseeker v0.0.0-20200621085525-1d3f536ff85e // indirect
 	github.com/phpdave11/gofpdf v1.4.3 // indirect
 	github.com/phpdave11/gofpdi v1.0.16 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
-	github.com/pkg/sftp v1.13.10 // indirect
-	github.com/robertkrimen/otto v0.5.1 // indirect
-	golang.org/x/crypto v0.50.0 // indirect
 	golang.org/x/net v0.53.0 // indirect
 	golang.org/x/sys v0.43.0 // indirect
 	golang.org/x/text v0.36.0 // indirect

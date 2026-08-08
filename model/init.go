@@ -1,9 +1,12 @@
 package model
 
 import (
-	"github.com/go-gorp/gorp"
+	"database/sql"
+
+	"github.com/freemed/remitt-server/internal/dbgen"
 )
 
 var (
-	DbMap *gorp.DbMap
+	SqlDb   *sql.DB
+	Queries *dbgen.Queries
 )

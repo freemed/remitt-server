@@ -1,9 +1,10 @@
 package model
 
-import ()
+import (
+	"context"
+	"database/sql"
 
-const (
-	TABLE_KEY_RING = "tKeyring"
+	"github.com/freemed/remitt-server/internal/dbgen"
 )
 
 type KeyringModel struct {
@@ -14,6 +15,13 @@ type KeyringModel struct {
 	PublicKey  []byte `db:"publickey"`
 }
 
-func init() {
-	DbTables = append(DbTables, DbTable{TableName: TABLE_KEY_RING, Obj: KeyringModel{}, Key: "Id"})
+func AddKeyToKeyring(user, keyName string, privateKey, publicKey []byte) error {
+	params := dbgen.AddKeyToKeyringParams{
+		User:       user,
+		Keyname:    keyName,
+		Privatekey: sql.NullString{String: string(privateKey), Valid: len(privateKey) > 0},
+		Publickey:  sql.NullString{String: string(publicKey), Valid: len(publicKey) > 0},
+	}
+	_, err := Queries.AddKeyToKeyring(context.Background(), params)
+	return err
 }

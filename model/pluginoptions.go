@@ -1,7 +1,7 @@
 package model
 
-const (
-	TABLE_PLUGIN_OPTIONS = "tPluginOptions"
+import (
+	"context"
 )
 
 type PluginOptionsModel struct {
@@ -15,12 +15,23 @@ type PluginOptionsModel struct {
 	OutputFormat NullString `db:"outputFormat"`
 }
 
-func init() {
-	DbTables = append(DbTables, DbTable{TableName: TABLE_PLUGIN_OPTIONS, Obj: PluginOptionsModel{}, Key: ""})
-}
-
 func GetPluginOptions(plugin string) ([]PluginOptionsModel, error) {
-	var o []PluginOptionsModel
-	_, err := DbMap.Select(&o, "SELECT * FROM "+TABLE_PLUGIN_OPTIONS+" WHERE plugin = ?", plugin)
-	return o, err
+	rows, err := Queries.GetPluginOptions(context.Background(), plugin)
+	if err != nil {
+		return nil, err
+	}
+	o := make([]PluginOptionsModel, len(rows))
+	for i, r := range rows {
+		o[i] = PluginOptionsModel{
+			PluginOption: r.Poption,
+			Plugin:       r.Plugin,
+			FullName:     r.Fullname,
+			Version:      r.Version,
+			Author:       r.Author,
+			Category:     r.Category,
+			InputFormat:  nullStringFromSQL(r.Inputformat),
+			OutputFormat: nullStringFromSQL(r.Outputformat),
+		}
+	}
+	return o, nil
 }

@@ -1,12 +1,16 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/freemed/remitt-server/common"
+	"github.com/freemed/remitt-server/internal/dbgen"
 	"github.com/freemed/remitt-server/model"
 	"github.com/labstack/echo/v5"
 )
@@ -33,8 +37,8 @@ func (a Api) GetFile(c *echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, http.StatusText(http.StatusBadRequest))
 	}
 
-	var o model.FileStoreModel
-	err := model.DbMap.SelectOne(&o, "SELECT * FROM "+model.TABLE_FILE_STORE+" WHERE user = ? AND category = ? AND filename = ?", user, category, filename)
+	params := dbgen.GetFileParams{User: user, Category: category, Filename: filename}
+	f, err := model.Queries.GetFile(context.Background(), params)
 	if err != nil {
 		log.Print(tag + err.Error())
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
@@ -59,7 +63,7 @@ func (a Api) GetFile(c *echo.Context) error {
 		contentType = "application/octet-stream"
 	}
 
-	return c.Blob(http.StatusOK, contentType, o.Content)
+	return c.Blob(http.StatusOK, contentType, []byte(f.Content.String))
 }
 
 func (a Api) GetFileList(c *echo.Context) error {
@@ -76,31 +80,71 @@ func (a Api) GetFileList(c *echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, http.StatusText(http.StatusBadRequest))
 	}
 
-	queryBase := "SELECT f.filename AS filename " +
-		" , f.contentsize AS filesize" +
-		" , p.originalId AS originalId " +
-		" , p.insert_stamp AS inserted " +
-		" FROM tFileStore f " +
-		" LEFT OUTER JOIN tPayload p ON p.id = f.payloadId " +
-		" WHERE f.user = ? " +
-		" AND f.category = ? " +
-		" AND "
+	var items []model.FileListItem
+
 	switch strings.ToLower(criteria) {
 	case "month":
-		queryBase += " DATE_FORMAT(f.stamp, '%Y-%m') = ? " + ";"
+		t, err := time.Parse("2006-01", value)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid month format, expected YYYY-MM")
+		}
+		params := dbgen.GetFileListByMonthParams{User: user, Category: category, Month: t}
+		rows, err := model.Queries.GetFileListByMonth(context.Background(), params)
+		if err != nil {
+			log.Print(tag + err.Error())
+			return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+		}
+		items = make([]model.FileListItem, len(rows))
+		for i, r := range rows {
+			items[i] = model.FileListItem{
+				FileName:   r.Filename,
+				FileSize:   int64(r.Filesize),
+				Inserted:   r.Inserted.Time,
+				OriginalID: r.Originalid.String,
+			}
+		}
 	case "year":
-		queryBase += " DATE_FORMAT(f.stamp, '%Y') = ? " + ";"
+		t, err := time.Parse("2006", value)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid year format, expected YYYY")
+		}
+		params := dbgen.GetFileListByYearParams{User: user, Category: category, Year: t}
+		rows, err := model.Queries.GetFileListByYear(context.Background(), params)
+		if err != nil {
+			log.Print(tag + err.Error())
+			return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+		}
+		items = make([]model.FileListItem, len(rows))
+		for i, r := range rows {
+			items[i] = model.FileListItem{
+				FileName:   r.Filename,
+				FileSize:   int64(r.Filesize),
+				Inserted:   r.Inserted.Time,
+				OriginalID: r.Originalid.String,
+			}
+		}
 	case "payload":
-		queryBase += " f.payloadId = ? " + ";"
+		pid, err := strconv.ParseUint(value, 10, 64)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid payload id")
+		}
+		params := dbgen.GetFileListByPayloadParams{User: user, Category: category, PayloadID: pid}
+		rows, err := model.Queries.GetFileListByPayload(context.Background(), params)
+		if err != nil {
+			log.Print(tag + err.Error())
+			return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+		}
+		items = make([]model.FileListItem, len(rows))
+		for i, r := range rows {
+			items[i] = model.FileListItem{
+				FileName:   r.Filename,
+				FileSize:   int64(r.Filesize),
+				Inserted:   r.Inserted.Time,
+				OriginalID: r.Originalid.String,
+			}
+		}
 	default:
 		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("bad criteria %s", criteria))
-	}
-
-	var items []model.FileListItem
-	_, err := model.DbMap.Select(&items, queryBase, user, category, value)
-	if err != nil {
-		log.Print(tag + err.Error())
-		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
 
 	return c.JSON(http.StatusOK, items)
@@ -118,13 +162,13 @@ func (a Api) GetOutputMonths(c *echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, http.StatusText(http.StatusBadRequest))
 	}
 
-	query := "SELECT DATE_FORMAT(stamp, '%Y-%m') AS m " +
-		" FROM tFileStore " +
-		" WHERE user = ? AND YEAR(stamp) = ? " +
-		" GROUP BY m "
+	t, err := time.Parse("2006", year)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid year format, expected YYYY")
+	}
 
-	var items []string
-	_, err := model.DbMap.Select(&items, query, user, year)
+	params := dbgen.GetOutputMonthsParams{User: user, Year: t}
+	items, err := model.Queries.GetOutputMonths(context.Background(), params)
 	if err != nil {
 		log.Print(tag + err.Error())
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
@@ -138,21 +182,19 @@ func (a Api) GetOutputYears(c *echo.Context) error {
 
 	tag := fmt.Sprintf("api.GetOutputYears() [%s]: ", user)
 
-	query := "SELECT " +
-		"  DISTINCT(YEAR(stamp)) AS year " +
-		", COUNT(YEAR(stamp)) AS c " +
-		" FROM tFileStore " +
-		" WHERE user = ? " +
-		" GROUP BY YEAR(stamp) "
-
-	var items []struct {
-		Year  string `json:"year" db:"year"`
-		Count int64  `json:"count" db:"c"`
-	}
-	_, err := model.DbMap.Select(&items, query, user)
+	rows, err := model.Queries.GetOutputYears(context.Background(), user)
 	if err != nil {
 		log.Print(tag + err.Error())
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+	}
+
+	type outputYear struct {
+		Year  int32 `json:"year"`
+		Count int64 `json:"count"`
+	}
+	items := make([]outputYear, len(rows))
+	for i, r := range rows {
+		items[i] = outputYear{Year: r.Year, Count: r.C}
 	}
 
 	return c.JSON(http.StatusOK, items)

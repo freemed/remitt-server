@@ -14,6 +14,7 @@ import (
 	"github.com/freemed/remitt-server/config"
 	"github.com/freemed/remitt-server/jobqueue"
 	"github.com/freemed/remitt-server/model"
+	"github.com/freemed/remitt-server/task"
 	"github.com/labstack/echo/v5"
 	"github.com/labstack/echo/v5/middleware"
 )
@@ -43,7 +44,7 @@ func main() {
 	}
 
 	log.Print("Initializing database backend")
-	model.DbMap = model.InitDb()
+	model.InitDb()
 
 	if config.Config.Paths.TemporaryPath != "/tmp" {
 		log.Print("Ensuring temporary directory exists")
@@ -55,6 +56,11 @@ func main() {
 
 	log.Printf("Initializing worker threads")
 	jobqueue.StartDispatcher(config.Config.TimingIterations.NumWorkerThreads)
+
+	log.Print("Initializing task scheduler")
+	scheduler := task.NewScheduler()
+	scheduler.Start()
+	defer scheduler.Stop()
 
 	log.Print("Initializing web services")
 	e := echo.New()

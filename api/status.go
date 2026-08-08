@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -35,7 +36,7 @@ func (a Api) GetStatus(c *echo.Context) error {
 	}
 
 	var obj getStatusResult
-	err = model.DbMap.SelectOne(&obj, "CALL p_Status( ?, ? );", user, payloadID)
+	err = model.SqlDb.QueryRowContext(context.Background(), "CALL p_Status(?, ?)", user, payloadID).Scan(&obj.Status, &obj.Stage)
 	if err != nil {
 		log.Print(tag + err.Error())
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
@@ -58,7 +59,7 @@ func (a Api) GetBulkStatus(c *echo.Context) error {
 	out := map[int64]getStatusResult{}
 	for _, id := range ids {
 		var obj getStatusResult
-		err = model.DbMap.SelectOne(&obj, "CALL p_Status( ?, ? );", user, id)
+		err = model.SqlDb.QueryRowContext(context.Background(), "CALL p_Status(?, ?)", user, id).Scan(&obj.Status, &obj.Stage)
 		if err != nil {
 			log.Print(tag + err.Error())
 			continue
