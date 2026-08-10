@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<render>
+	<x12format>
+		<delimiter>*</delimiter>
+		<endofline>~</endofline>
+	</x12format>
+	<x12segment sid="ISA">
+		<comment>Interchange Control Header</comment>
+		<element><content>00</content></element>
+		<element><content>          </content></element>
+		<element><content>00</content></element>
+		<element><content>          </content></element>
+		<element><content>ZZ</content></element>
+		<element><content>REMITT          </content></element>
+		<element><content>ZZ</content></element>
+		<element><content>RECEIVER        </content></element>
+		<element><content>240810</content></element>
+		<element><content>1200</content></element>
+		<element><content>U</content></element>
+		<element><content>00401</content></element>
+		<element><content>000000001</content></element>
+		<element><content>0</content></element>
+		<element><content>P</content></element>
+		<element><content>:</content></element>
+	</x12segment>
+	<x12segment sid="GS">
+		<comment>Functional Group Header</comment>
+		<element><content>HC</content></element>
+		<element><content>REMITT</content></element>
+		<element><content>RECEIVER</content></element>
+		<element><content>20240810</content></element>
+		<element><content>1200</content></element>
+		<element><content>1</content></element>
+		<element><content>X</content></element>
+		<element><content>004010X098A1</content></element>
+	</x12segment>
+	<x12segment sid="ST">
+		<comment>Transaction Set Header</comment>
+		<element><content>835</content></element>
+		<element><content>0001</content></element>
+	</x12segment>
+	<x12segment sid="BPR">
+		<comment>Financial Information</comment>
+		<element><content>I</content></element>
+		<element><content>1250.00</content></element>
+		<element><content>C</content></element>
+		<element><content>CHK</content></element>
+		<element><content></content></element>
+		<element><content>01</content></element>
+		<element><content>123456789</content></element>
+		<element><content>DA</content></element>
+		<element><content>987654321</content></element>
+		<element><content>1234567890</content></element>
+		<element><content>01</content></element>
+		<element><content>20240810</content></element>
+	</x12segment>
+	<x12segment sid="TRN">
+		<comment>Trace Number</comment>
+		<element><content>1</content></element>
+		<element><content>TRACE-001</content></element>
+		<element><content>1</content></element>
+		<element><content>987654321</content></element>
+	</x12segment>
+	<x12segment sid="N1">
+		<comment>Payer Identification</comment>
+		<element><content>PR</content></element>
+		<element><content>TEST PAYER</content></element>
+	</x12segment>
+	<x12segment sid="N1">
+		<comment>Payee Identification</comment>
+		<element><content>PE</content></element>
+		<element><content>TEST PAYEE</content></element>
+		<element><content>XX</content></element>
+		<element><content>1234567890</content></element>
+	</x12segment>
+	<x12segment sid="LX">
+		<comment>Header Number</comment>
+		<element><content>1</content></element>
+	</x12segment>
+	<x12segment sid="CLP">
+		<comment>Claim Payment Information</comment>
+		<element><content>CLAIM001</content></element>
+		<element><content>1</content></element>
+		<element><content>500.00</content></element>
+		<element><content>400.00</content></element>
+		<element><content></content></element>
+		<element><content>12</content></element>
+		<element><content>MC</content></element>
+		<element><content>1</content></element>
+	</x12segment>
+	<x12segment sid="NM1">
+		<comment>Patient Name</comment>
+		<element><content>QC</content></element>
+		<element><content>1</content></element>
+		<element><content>DOE</content></element>
+		<element><content>JOHN</content></element>
+		<element><content></content></element>
+		<element><content></content></element>
+		<element><content>MI</content></element>
+		<element><content>PATIENT01</content></element>
+	</x12segment>
+	<x12segment sid="SE">
+		<comment>Transaction Set Trailer</comment>
+		<element><counter name="segcount"><name>segcount</name></counter></element>
+		<element><content>0001</content></element>
+	</x12segment>
+	<x12segment sid="GE">
+		<comment>Functional Group Trailer</comment>
+		<element><content>1</content></element>
+		<element><content>1</content></element>
+	</x12segment>
+	<x12segment sid="IEA">
+		<comment>Interchange Control Trailer</comment>
+		<element><content>1</content></element>
+		<element><content>000000001</content></element>
+	</x12segment>
+</render>

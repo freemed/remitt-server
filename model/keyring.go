@@ -25,3 +25,21 @@ func AddKeyToKeyring(user, keyName string, privateKey, publicKey []byte) error {
 	_, err := Queries.AddKeyToKeyring(context.Background(), params)
 	return err
 }
+
+// GetKeyringEntry retrieves a keyring entry by user and key name.
+func GetKeyringEntry(user, keyName string) (KeyringModel, error) {
+	row, err := Queries.GetKeyringEntry(context.Background(), dbgen.GetKeyringEntryParams{
+		User:    user,
+		Keyname: keyName,
+	})
+	if err != nil {
+		return KeyringModel{}, err
+	}
+	return KeyringModel{
+		Id:         row.ID,
+		User:       row.User,
+		KeyName:    row.Keyname,
+		PrivateKey: []byte(row.Privatekey.String),
+		PublicKey:  []byte(row.Publickey.String),
+	}, nil
+}

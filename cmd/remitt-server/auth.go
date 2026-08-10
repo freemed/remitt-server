@@ -17,14 +17,15 @@ const AuthUserKey = "user"
 func LoadUserMiddleware() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c *echo.Context) error {
-			usernameVal := c.Get(AuthUserKey)
-			if usernameVal == nil {
-				return echo.NewHTTPError(http.StatusInternalServerError, "auth: user not found in context")
+			// Echo v5 BasicAuth middleware validates credentials but does not
+			// store the username in context. We extract it from the request
+			// Authorization header directly.
+			username, _, _ := c.Request().BasicAuth()
+			if username == "" {
+				return echo.NewHTTPError(http.StatusInternalServerError, "auth: no valid basic auth credentials")
 			}
-			username, ok := usernameVal.(string)
-			if !ok {
-				return echo.NewHTTPError(http.StatusInternalServerError, "auth: invalid username type in context")
-			}
+
+			c.Set(AuthUserKey, username)
 
 			u, err := model.GetUserByName(username)
 			if err != nil {

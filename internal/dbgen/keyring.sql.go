@@ -30,3 +30,35 @@ func (q *Queries) AddKeyToKeyring(ctx context.Context, arg AddKeyToKeyringParams
 		arg.Publickey,
 	)
 }
+
+const getKeyringEntry = `-- name: GetKeyringEntry :one
+SELECT id, user, keyname, privatekey, publickey
+FROM tKeyring
+WHERE user = ? AND keyname = ?
+`
+
+type GetKeyringEntryParams struct {
+	User    string `json:"user"`
+	Keyname string `json:"keyname"`
+}
+
+type GetKeyringEntryRow struct {
+	ID         int64          `json:"id"`
+	User       string         `json:"user"`
+	Keyname    string         `json:"keyname"`
+	Privatekey sql.NullString `json:"privatekey"`
+	Publickey  sql.NullString `json:"publickey"`
+}
+
+func (q *Queries) GetKeyringEntry(ctx context.Context, arg GetKeyringEntryParams) (GetKeyringEntryRow, error) {
+	row := q.db.QueryRowContext(ctx, getKeyringEntry, arg.User, arg.Keyname)
+	var i GetKeyringEntryRow
+	err := row.Scan(
+		&i.ID,
+		&i.User,
+		&i.Keyname,
+		&i.Privatekey,
+		&i.Publickey,
+	)
+	return i, err
+}
