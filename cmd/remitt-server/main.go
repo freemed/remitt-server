@@ -14,6 +14,7 @@ import (
 	"github.com/freemed/remitt-server/config"
 	"github.com/freemed/remitt-server/jobqueue"
 	"github.com/freemed/remitt-server/model"
+	"github.com/freemed/remitt-server/soap"
 	"github.com/freemed/remitt-server/task"
 	"github.com/labstack/echo/v5"
 	"github.com/labstack/echo/v5/middleware"
@@ -84,6 +85,9 @@ func main() {
 		return model.BasicAuthCallback(username, password), nil
 	}))
 	e.Use(LoadUserMiddleware())
+
+	// SOAP compatibility layer (intercepts /services/interface)
+	e.Use(soap.Middleware())
 
 	// Enable gzip compression
 	e.Use(middleware.Gzip())
