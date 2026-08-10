@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/freemed/remitt-server/callback"
 	"github.com/freemed/remitt-server/common"
 	"github.com/freemed/remitt-server/config"
 	"github.com/freemed/remitt-server/model"
@@ -273,7 +274,7 @@ func processJobQueueItem(w *JobQueueItem) error {
 }
 
 // executeJob performs the actual worker task
-func executeJob(w *JobQueueItem) error {
+func executeJob(w *JobQueueItem) (err error) {
 	tag := fmt.Sprintf("executeJob(%d): ", w.ID)
 
 	u, err := model.GetUserByName(w.User)
@@ -282,6 +283,12 @@ func executeJob(w *JobQueueItem) error {
 		return fmt.Errorf("executejob: getuserbyname: %w", err)
 	}
 	ctx := user.NewContext(context.Background(), &u)
+
+	// Fire callback asynchronously on completion (success or failure).
+	// Non-blocking goroutine so job processing is never delayed.
+	defer func() {
+		go fireCallback(&u, w, err)
+	}()
 
 	// Render
 	renderPlugin, err := render.InstantiateRenderer(w.RenderPlugin)
@@ -354,4 +361,37 @@ func executeJob(w *JobQueueItem) error {
 
 	w.Finish()
 	return nil
+}
+
+// fireCallback sends a job completion notification via the configured callback sender.
+// This is always called in its own goroutine so it never blocks job processing.
+func fireCallback(u *model.UserModel, w *JobQueueItem, jobErr error) {
+	status := "SUCCESS"
+	message := w.Message
+	if jobErr != nil {
+		status = "FAILED"
+		message = jobErr.Error()
+	}
+
+	// Parse OriginalID as PayloadID if numeric
+	var payloadID int64
+	if id, err := strconv.ParseInt(w.OriginalID, 10, 64); err == nil {
+		payloadID = id
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	result := callback.JobResult{
+		JobID:      w.ID,
+		PayloadID:  payloadID,
+		Status:     status,
+		Message:    message,
+		OriginalID: w.OriginalID,
+	}
+
+	sender := callback.DefaultCallbackSender()
+	if err := sender.SendResult(ctx, u, result); err != nil {
+		log.Printf("fireCallback: callback failed for job %d: %v", w.ID, err)
+	}
 }

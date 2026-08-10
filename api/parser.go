@@ -10,26 +10,47 @@ import (
 
 func init() {
 	common.ApiMap["parser"] = func(g *echo.Group) {
-		g.POST("/parse/:parserClass", a.ParseData)
+		g.POST("/parse", a.ParseData)
 	}
 }
 
+type parseRequest struct {
+	Plugin string `json:"plugin"`
+	Data   string `json:"data"`
+}
+
+// ParseData parses X12 EDI data using the specified parser plugin.
 func (a Api) ParseData(c *echo.Context) error {
-	parserClass := c.Param("parserClass")
+	user := c.Get(common.AuthUserKey).(string)
 
-	p, err := parser.InstantiateParser(parserClass)
+	var req parseRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+
+	if req.Plugin == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "plugin is required")
+	}
+	if req.Data == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "data is required")
+	}
+
+	p, err := parser.InstantiateParser(req.Plugin)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 
-	data, err := common.BodyFromContext(c)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
-	}
+	// Set context on the parser instance
+	_ = p.SetContext(c.Request().Context())
 
-	result, err := p.ParseData(string(data))
+	result, err := p.ParseData(req.Data)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
-	return c.JSON(http.StatusOK, result)
+
+	_ = user // user is available for audit/logging if needed
+
+	return c.JSON(http.StatusOK, map[string]string{
+		"result": result,
+	})
 }

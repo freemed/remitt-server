@@ -14,21 +14,22 @@ func init() {
 	}
 }
 
+// keyringInput is the JSON request body for adding a key to the keyring.
+type keyringInput struct {
+	KeyName    string `json:"key_name"`
+	PrivateKey string `json:"private_key"`
+	PublicKey  string `json:"public_key"`
+}
+
 func (a Api) KeyringAdd(c *echo.Context) error {
 	user := c.Get(common.AuthUserKey).(string)
-
-	type keyringInput struct {
-		KeyName    string `json:"keyname"`
-		PrivateKey []byte `json:"privatekey"`
-		PublicKey  []byte `json:"publickey"`
-	}
 
 	var raw keyringInput
 	if err := c.Bind(&raw); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 
-	err := model.AddKeyToKeyring(user, raw.KeyName, raw.PrivateKey, raw.PublicKey)
+	err := model.AddKeyToKeyring(user, raw.KeyName, []byte(raw.PrivateKey), []byte(raw.PublicKey))
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}

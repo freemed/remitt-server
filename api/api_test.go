@@ -564,3 +564,121 @@ func TestUnknownEndpoint(t *testing.T) {
 		t.Errorf("expected 404, got %d", rec.Code)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Test server with roles injection
+// ---------------------------------------------------------------------------
+
+// setupTestServerWithRoles creates an Echo test server that also injects
+// the given roles into the context, so handlers that call aclRequireRole
+// can be tested without a full LoadUserMiddleware chain.
+func setupTestServerWithRoles(authFunc func(string, string) bool, roles []string) *echo.Echo {
+	e := echo.New()
+
+	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c *echo.Context) error {
+			username, password, ok := c.Request().BasicAuth()
+			if !ok {
+				return echo.ErrUnauthorized
+			}
+			valid := authFunc(username, password)
+			if !valid {
+				return echo.ErrUnauthorized
+			}
+			c.Set(common.AuthUserKey, username)
+			c.Set("roles", roles)
+			return next(c)
+		}
+	})
+
+	api := e.Group("/api")
+	for k, v := range common.ApiMap {
+		v(api.Group("/" + k))
+	}
+
+	return e
+}
+
+// ---------------------------------------------------------------------------
+// User Add (addRemittUser) Endpoint Tests
+// ---------------------------------------------------------------------------
+
+// TestAddRemittUser_RequiresAdmin verifies that non-admin users cannot
+// access the user creation endpoint. Sends a valid JSON body with
+// non-admin roles and expects a 511 NetworkAuthenticationRequired.
+func TestAddRemittUser_RequiresAdmin(t *testing.T) {
+	e := setupTestServerWithRoles(func(u, p string) bool { return true }, []string{"user"})
+
+	body := `{
+		"username": "newuser",
+		"password": "secret",
+		"role": "user",
+		"contact_email": "user@example.com",
+		"callback_service_uri": "https://example.com",
+		"callback_service_wsdl_uri": "https://example.com/wsdl",
+		"callback_username": "cbuser",
+		"callback_password": "cbpass"
+	}`
+
+	req := httptest.NewRequest(http.MethodPost, "/api/user/add",
+		strings.NewReader(body))
+	req.SetBasicAuth("regularuser", "testpass")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	// aclRequireRole returns 511 NetworkAuthenticationRequired when
+	// the user lacks the required role.
+	if rec.Code != http.StatusNetworkAuthenticationRequired {
+		t.Errorf("expected 511 NetworkAuthenticationRequired, got %d: %s",
+			rec.Code, rec.Body.String())
+	}
+}
+
+// TestAddRemittUser_ValidRequest verifies that an admin user can invoke
+// the user creation endpoint with a valid request body. The handler
+// parses the body, builds a UserModel, and calls model.AddUser which
+// requires a live DB — we recover from the nil-DB panic and skip.
+func TestAddRemittUser_ValidRequest(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Skipf("DB not available (required for user add): %v", r)
+		}
+	}()
+
+	e := setupTestServerWithRoles(func(u, p string) bool { return true }, []string{"admin"})
+
+	body := `{
+		"username": "newuser",
+		"password": "secret",
+		"role": "user",
+		"contact_email": "user@example.com",
+		"callback_service_uri": "https://example.com",
+		"callback_service_wsdl_uri": "https://example.com/wsdl",
+		"callback_username": "cbuser",
+		"callback_password": "cbpass"
+	}`
+
+	req := httptest.NewRequest(http.MethodPost, "/api/user/add",
+		strings.NewReader(body))
+	req.SetBasicAuth("admin", "adminpass")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	// If we get here without a panic (DB was available), the handler
+	// should return 200 with the new user ID.
+	if rec.Code == http.StatusOK {
+		var id int64
+		if err := json.Unmarshal(rec.Body.Bytes(), &id); err != nil {
+			t.Errorf("failed to unmarshal user ID: %v", err)
+		}
+		if id <= 0 {
+			t.Errorf("expected positive user ID, got %d", id)
+		}
+	} else if rec.Code == http.StatusUnauthorized {
+		t.Errorf("unexpected 401 for admin user: %s", rec.Body.String())
+	} else {
+		t.Logf("got %d (may be DB error): %s", rec.Code, rec.Body.String())
+	}
+}

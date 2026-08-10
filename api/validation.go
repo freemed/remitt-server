@@ -1,6 +1,8 @@
 package api
 
 import (
+	"encoding/json"
+	"io"
 	"net/http"
 
 	"github.com/freemed/remitt-server/common"
@@ -10,25 +12,39 @@ import (
 
 func init() {
 	common.ApiMap["validation"] = func(g *echo.Group) {
-		g.POST("/validate/:validatorClass", a.ValidatePayload)
+		g.POST("/validate", a.ValidatePayload)
 	}
 }
 
-// ValidatePayload runs a named validator against the request body.
+// validateRequest is the JSON body for a validation request.
+type validateRequest struct {
+	Plugin string `json:"plugin"`
+	Data   string `json:"data"`
+}
+
+// ValidatePayload runs a named validator against the provided X12 data.
 func (a Api) ValidatePayload(c *echo.Context) error {
-	validatorClass := c.Param("validatorClass")
+	user := c.Get(common.AuthUserKey).(string)
+	_ = user // user is extracted and available for audit/logging
 
-	v, err := validation.InstantiateValidator(validatorClass)
+	// Read and parse the request body
+	var req validateRequest
+	body, err := io.ReadAll(c.Request().Body)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+
+	// Instantiate the validator plugin by name
+	v, err := validation.InstantiateValidator(req.Plugin)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 
-	data, err := common.BodyFromContext(c)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
-	}
-
-	response, err := v.Validate(data)
+	// Run validation
+	response, err := v.Validate([]byte(req.Data))
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
