@@ -13,11 +13,13 @@ import (
 	"github.com/freemed/remitt-server/common"
 	"github.com/freemed/remitt-server/config"
 	"github.com/freemed/remitt-server/jobqueue"
+	remittmiddleware "github.com/freemed/remitt-server/middleware"
 	"github.com/freemed/remitt-server/model"
 	"github.com/freemed/remitt-server/soap"
 	"github.com/freemed/remitt-server/task"
 	"github.com/labstack/echo/v5"
 	"github.com/labstack/echo/v5/middleware"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 var (
@@ -92,6 +94,9 @@ func main() {
 	// Enable gzip compression
 	e.Use(middleware.Gzip())
 
+	// Prometheus metrics middleware (before routes so all requests are counted)
+	e.Use(remittmiddleware.Prometheus())
+
 	// Serve up the static UI...
 	e.Static("/ui", "ui")
 	e.File("/favicon.ico", "ui/favicon.ico")
@@ -100,6 +105,9 @@ func main() {
 	e.GET("/", func(c *echo.Context) error {
 		return c.Redirect(http.StatusMovedPermanently, "./ui/index.html")
 	})
+
+	// Prometheus /metrics endpoint
+	e.GET("/metrics", echo.WrapHandler(promhttp.Handler()))
 
 	api := e.Group("/api")
 

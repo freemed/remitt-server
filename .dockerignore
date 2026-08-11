@@ -1,0 +1,13 @@
+.git/
+.hermes/
+test/
+*.md
+*.jpg
+*.png
+remitt-server
+Dockerfile
+.dockerignore
+.gitignore
+.git-crypt/
+.github/
+.travis.yml

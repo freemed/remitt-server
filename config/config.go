@@ -24,7 +24,6 @@ type AppConfig struct {
 		DbMigrationsPath string `yaml:"db-migrations"`
 		DistPath         string `yaml:"dist"`
 		XsltProcPath     string `yaml:"xsltproc"`
-		SshPath          string `yaml:"ssh"`
 		TemporaryPath    string `yaml:"temp"`
 	} `yaml:"paths"`
 	Mail struct {
@@ -47,7 +46,6 @@ func (c *AppConfig) SetDefaults() {
 	c.Database.Host = "localhost"
 	c.Paths.BasePath = "."
 	c.Paths.DbMigrationsPath = "migrations"
-	c.Paths.SshPath = "/usr/bin/ssh"
 	c.Paths.TemporaryPath = "/tmp"
 	c.InternalXslt = false
 }

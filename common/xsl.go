@@ -1,8 +1,7 @@
 package common
 
 import (
-	//"io/ioutil"
-
+	"bytes"
 	"log"
 	"os"
 	"strings"
@@ -12,17 +11,44 @@ import (
 	"github.com/freemed/remitt-server/config"
 )
 
+// readXMLFile reads an XML file and returns a parsed document.
+// Strips the XML declaration (<?xml ...?>) and leading comment blocks
+// to work around a pure-Go gokogiri parser bug where these cause nil Root().
+func readXMLFile(path string) (*xml.XmlDocument, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	data = bytes.TrimSpace(data)
+	// Strip XML declaration if present
+	if bytes.HasPrefix(data, []byte("<?xml")) {
+		if idx := bytes.Index(data, []byte("?>")); idx >= 0 {
+			data = bytes.TrimSpace(data[idx+2:])
+		}
+	}
+	// Strip leading comment blocks
+	for bytes.HasPrefix(data, []byte("<!--")) {
+		if idx := bytes.Index(data, []byte("-->") ); idx >= 0 {
+			data = bytes.TrimSpace(data[idx+3:])
+		} else {
+			break
+		}
+	}
+	return xml.Parse(data, xml.DefaultEncodingBytes, []byte(path),
+		xml.DefaultParseOption, xml.DefaultEncodingBytes)
+}
+
 // XslTransformIntermal uses the ratago native Go XSL implementation to perform XSL
 // transforms with parameters.
 func XslTransformInternal(inxml, xslfile, outxml string, vars map[string]string) error {
 	log.Printf("XslTransform(): %v", vars)
 
-	style, err := xml.ReadFile(xslfile, xml.StrictParseOption)
+	style, err := readXMLFile(xslfile)
 	if err != nil {
 		return err
 	}
 
-	doc, err := xml.ReadFile(inxml, xml.StrictParseOption)
+	doc, err := readXMLFile(inxml)
 	if err != nil {
 		return err
 	}
