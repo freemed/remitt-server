@@ -150,11 +150,17 @@ func (o *JobQueueItem) Render() (out []byte, err error) {
 	//defer os.Remove(outxml.Name())
 
 	xslfile := config.Config.Paths.BasePath + string(os.PathSeparator) + "resources" + string(os.PathSeparator) + "xsl" + string(os.PathSeparator) + o.RenderOption + ".xsl"
-	//if config.Config.InternalXslt {
-	//	err = common.XslTransform(inxml.Name(), xslfile, outxml.Name(), map[string]string{})
-	//} else {
-	err = common.XslTransformExternal(inxml.Name(), xslfile, outxml.Name(), map[string]string{})
-	//}
+
+	// Honor the configured engine (common.XslTransform dispatches, and falls back
+	// to xsltproc if the in-process engine errors). The transform error used to be
+	// discarded here: it was overwritten by the ReadFile error two statements
+	// later, so a failed render returned an empty result with a nil error.
+	if err = common.XslTransform(inxml.Name(), xslfile, outxml.Name(), map[string]string{}); err != nil {
+		log.Printf("Render(): %s", err.Error())
+		outxml.Close()
+		os.Remove(outxml.Name())
+		return
+	}
 
 	// Bring data back in by reading again
 	outxml.Close()

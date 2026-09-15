@@ -47,7 +47,12 @@ func (c *AppConfig) SetDefaults() {
 	c.Paths.BasePath = "."
 	c.Paths.DbMigrationsPath = "migrations"
 	c.Paths.TemporaryPath = "/tmp"
-	c.InternalXslt = false
+	// The in-process XSLT engine (ratago + the forked xpath) is the default: it
+	// matches xsltproc byte-for-byte on the shipped stylesheets and needs no
+	// external process. Set `internal-xslt: false` to use the xsltproc binary
+	// instead; the binary is still shipped and is also used as a fallback if the
+	// in-process engine errors (see common.XslTransform).
+	c.InternalXslt = true
 }
 
 func LoadConfigWithDefaults(configPath string) (*AppConfig, error) {

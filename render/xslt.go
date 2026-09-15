@@ -43,11 +43,7 @@ func (x *XsltPlugin) Render(input []byte, option string) ([]byte, error) {
 	xslFile := filepath.Join(config.Config.Paths.BasePath, "resources", "xsl", option+".xsl")
 
 	// Apply transform
-	if config.Config.InternalXslt {
-		err = common.XslTransformInternal(inFile.Name(), xslFile, outFile.Name(), map[string]string{})
-	} else {
-		err = common.XslTransformExternal(inFile.Name(), xslFile, outFile.Name(), map[string]string{})
-	}
+	err = common.XslTransform(inFile.Name(), xslFile, outFile.Name(), map[string]string{})
 	if err != nil {
 		return nil, fmt.Errorf("xslt: transform: %w", err)
 	}

@@ -24,6 +24,12 @@ RUN apk add --no-cache \
     ca-certificates \
     libxslt
 
+# libxslt (and therefore xsltproc) is retained as the external XSLT fallback:
+# the built-in in-process engine is the default and matches xsltproc
+# byte-for-byte on the shipped stylesheets, but a deployment can switch back
+# with `internal-xslt: false`, and common.XslTransform falls back to this binary
+# automatically if the in-process engine errors.
+
 COPY --from=builder /remitt-server /usr/local/bin/remitt-server
 
 # Default config; mount your own at runtime

@@ -2,6 +2,7 @@ package common
 
 import (
 	"bytes"
+	"fmt"
 	"log"
 	"os"
 	"strings"
@@ -38,7 +39,39 @@ func readXMLFile(path string) (*xml.XmlDocument, error) {
 		xml.DefaultParseOption, xml.DefaultEncodingBytes)
 }
 
-// XslTransformIntermal uses the ratago native Go XSL implementation to perform XSL
+// XslTransform performs an XSL transform with the engine the configuration
+// selects.
+//
+// The in-process engine is the default (internal-xslt: true). It produces
+// output byte-identical to xsltproc for the shipped stylesheets, but xsltproc
+// is still kept in the image as a fallback: if the in-process engine returns an
+// error, the external binary is tried before the render is failed, because a
+// document produced by the fallback is worth more to the pipeline than no
+// document at all. The fallback is skipped when no binary path is configured,
+// so an unset path reports the real cause instead of "exec: no command".
+func XslTransform(inxml, xslfile, outxml string, vars map[string]string) error {
+	if !config.Config.InternalXslt {
+		return XslTransformExternal(inxml, xslfile, outxml, vars)
+	}
+
+	err := XslTransformInternal(inxml, xslfile, outxml, vars)
+	if err == nil {
+		return nil
+	}
+	if config.Config.Paths.XsltProcPath == "" {
+		return err
+	}
+
+	log.Printf("XslTransform: in-process engine failed, falling back to %q: %v",
+		config.Config.Paths.XsltProcPath, err)
+	if fallbackErr := XslTransformExternal(inxml, xslfile, outxml, vars); fallbackErr != nil {
+		return fmt.Errorf("in-process engine failed (%v) and %s fallback failed (%v)",
+			err, config.Config.Paths.XsltProcPath, fallbackErr)
+	}
+	return nil
+}
+
+// XslTransformInternal uses the ratago native Go XSL implementation to perform XSL
 // transforms with parameters.
 func XslTransformInternal(inxml, xslfile, outxml string, vars map[string]string) error {
 	log.Printf("XslTransform(): %v", vars)
