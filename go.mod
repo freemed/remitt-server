@@ -38,7 +38,7 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/freemed/gokogiri/xml v0.0.0-20260915170214-26857df2630e // indirect
 	github.com/freemed/gokogiri/xpath v0.0.0-20260811015931-43f588d9265e // indirect
-	github.com/freemed/ratago/xslt v0.0.0-20260915170216-c9e8eeee9fdc // indirect
+	github.com/freemed/ratago/xslt v0.0.0-20260915171859-a05a104b162e // indirect
 	github.com/freemed/xpath v1.3.11 // indirect
 	github.com/go-sql-driver/mysql v1.10.0 // indirect
 	github.com/kr/fs v0.1.0 // indirect
