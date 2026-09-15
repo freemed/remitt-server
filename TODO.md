@@ -217,6 +217,47 @@ contract, and each flipped test was RED-verified against the reverted code first
   (`tPluginOptions`: `4010_837p` → `org.remitt.plugin.render.XsltPlugin`), surfaced
   through `api/plugins.go:53`, not user configuration.
 
+### VERIFIED END-TO-END 2026-09-15: what the live run proved, and the four blockers
+
+Run against a real MySQL (8.0.46, provisioned for this) plus a real in-process
+SSH+SFTP server from `test/harness/sshsftp`. Full plan and sequencing:
+`docs/pipeline-wiring-plan.md`; raw logs in `.hermes/reports/e2e-live-run-*.log`.
+
+**Proved working:** the self-configuring transports (a job took its SFTP
+host/port/user/path purely from five `tUserConfig` rows, with a negative control -
+setting `sftpPort` to 1 made it dial `127.0.0.1:1` and fail, restoring the row
+delivered again); host-key verification end to end through `paths.known-hosts`; a
+real `statement.xsl` render (1175 bytes, md5 `16f9a6848644cb340a522020b1c32683`)
+**delivered** to the SFTP server with the bytes compared on both ends; and the
+consuming half of the queue (a hand-pushed item was processed to SUCCESS by
+worker[1] and the file landed). The transport FQCN namespaces are confirmed
+against live data, not assumed.
+
+**Four blockers, none of them regressions - wiring the Java had and the Go port
+never grew:**
+
+1. **Nothing feeds the queue** (see above) - blocks everything else. The Java
+   polled `tPayload` for `payloadState='valid'` rows with no `tProcessor` row
+   (`ControlThread.java:557-583`) and journaled each stage; the Go side needs a
+   poll query, in-flight skipping, the item built with an initialised lock, an
+   entry in `jobQueue` plus a copy on the channel, and stage journaling.
+2. **Translation resolution ignores the database**: `executeJob` passes the render
+   *option* (`4010_837p`) where the database resolves by the option's declared
+   *output format* (`p_ResolveTranslationPlugin`, `001_legacy.up.sql:327-338`), so
+   every shipped stylesheet fails with `unable to resolve translator between
+   '4010_837p' and 'x12'`. Java marked the payload failed when none resolved.
+3. **The translator gets `[]byte` where `x12xml` wants `model.X12Xml`**
+   (`invalid datatype presented`). Java had one entry point taking bytes
+   (`PluginInterface.java:41`) and each plugin parsed them itself.
+4. **`tFileStore` writes violate the foreign key**: `storefile`/`storefilepdf`
+   hardcode `PayloadID: 0` → error 1452. DISPATCHED.
+
+Also verified, for the record: `tTranslation` and `tPluginOptions` store plugin
+names as Java FQCNs while the translation registry answers only to short names, so
+`InstantiateTranslator('org.remitt.plugin.translation.X12Xml')` fails (DISPATCHED);
+and the two seeded `ScriptedHttpTransport` rows in `tUserConfig` are dead data -
+they are not options that plugin declares (`transport/script.go:156`).
+
 ### FIXED 2026-09-15: the database bootstrap could not migrate
 
 Found by standing up a real MySQL and running the application's own `InitDb`.
