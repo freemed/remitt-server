@@ -36,10 +36,10 @@ require (
 	github.com/antchfx/xpath v1.3.8 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/freemed/gokogiri/xml v0.0.0-20260915170214-26857df2630e // indirect
+	github.com/freemed/gokogiri/xml v0.0.0-20260915172826-7894ad67f15c // indirect
 	github.com/freemed/gokogiri/xpath v0.0.0-20260811015931-43f588d9265e // indirect
-	github.com/freemed/ratago/xslt v0.0.0-20260915171859-a05a104b162e // indirect
-	github.com/freemed/xpath v1.3.11 // indirect
+	github.com/freemed/ratago/xslt v0.0.0-20260915172825-53348f3958bd // indirect
+	github.com/freemed/xpath v1.3.12 // indirect
 	github.com/go-sql-driver/mysql v1.10.0 // indirect
 	github.com/kr/fs v0.1.0 // indirect
 	github.com/mattes/migrate v3.0.1+incompatible // indirect
