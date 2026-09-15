@@ -24,5 +24,13 @@ jobs:
     - name: Build
       run: go build -v ./...
 
+    # Workspace mode: `./...` from the repo root only matches root-module
+    # packages. The ten sub-modules must be tested explicitly or a failing
+    # sub-module (common, api, ...) stays invisible.
     - name: Test
-      run: go test -v ./...
+      run: |
+        go test -v ./...
+        for m in api client common config jobqueue model model/user render translation transport; do
+          echo "== $m =="
+          (cd "$m" && go test -count=1 ./...)
+        done
