@@ -182,6 +182,32 @@ contract, and each flipped test was RED-verified against the reverted code first
    while accepting short junk; `FromContext` reported a typed-nil user as found.
    All fixed.
 
+2. **Translation resolution ignores the database** — FIXED (`ee233a6`). Resolution
+   now asks the database first, exactly as `p_ResolveTranslationPlugin` does
+   (`001_legacy.up.sql:327-338`), with the Go registries' `InputFormat()` strings as
+   a **documented fallback** for a pair the database has no row for, and the source
+   used is reported per job (`(database)` vs `(go-registry)`) so a fallback is never
+   silent. Verified live through the real pipeline: `render XsltPlugin/4010_837p +
+   StoreFile` → `org.remitt.plugin.translation.X12Xml (database)` → payload
+   completed; `cms1500 + StoreFile` → `FixedFormXml (database)` → completed; and the
+   resolution agrees with `CALL p_ResolveTranslationPlugin(...)` for every case
+   checked, including the Java unit test's ScriptedHttp/ClaimLogic pair.
+   **One deliberate divergence to know about:** the database declares `statement`'s
+   render output format as `statementxml` and has no `tTranslation` row for it, so
+   the Java would have marked the payload failed
+   (`RenderProcessorThread.java:100-118`) while the owner's chosen fallback delivers
+   it (`fixedformxml (go-registry)`).
+3. **The translator gets `[]byte` where `x12xml` wants `model.X12Xml`** — FIXED
+   (`ee233a6`). `translation/input.go` gives each plugin the parse the Java did
+   itself (`PluginInterface.java:41` took bytes), while the typed model is still
+   accepted, which is how the plugins' own tests and existing callers call them.
+
+**With those, all three of the plan's remaining steps are done.** Every payload that
+previously could not reach a transport now ends `completed`: the shipped stylesheets
+`4010_837p` and `cms1500` resolve their translator *from the database*, `statement`
+via the fallback, and the delivery lands as a `tFileStore` row carrying this job's
+own `payloadId`/`processorId`.
+
 ### FIXED 2026-09-15: the pipeline has a trigger (`3af67c7`)
 
 **Blocker 1 is closed.** Both triggers the owner chose, converging on one enqueue
