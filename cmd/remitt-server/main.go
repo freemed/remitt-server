@@ -81,6 +81,25 @@ func main() {
 		}
 	}
 
+	// REQUIRED MIDDLEWARE ORDER (metrics correctness, do not reorder):
+	//
+	// Prometheus must be registered FIRST (outermost) and Recover/BasicAuth
+	// must be INSIDE it. Two things depend on that:
+	//
+	//  1. A middleware registered outside Prometheus that short-circuits
+	//     without calling next() is invisible to the metrics. BasicAuth
+	//     returning 401 for a missing/bad credential is exactly that case, and
+	//     rejected authentication is the traffic a security dashboard must see.
+	//  2. The status of a request is only final once the response is committed.
+	//     For a handler-returned error (and for every 404/405) that happens in
+	//     e.HTTPErrorHandler below, which echo runs AFTER the whole middleware
+	//     chain returns, so a recorder inside the chain cannot see it.
+	//
+	// middleware.Prometheus() handles (2) by recording from the response's
+	// commit hook; (1) is purely this ordering. The order is asserted by
+	// TestRemittServerRegistersPrometheusOutermost in middleware/prometheus_test.go.
+	e.Use(remittmiddleware.Prometheus())
+
 	e.Use(middleware.RequestLogger())
 	e.Use(middleware.Recover())
 	e.Use(middleware.BasicAuth(func(c *echo.Context, username, password string) (bool, error) {
@@ -94,9 +113,6 @@ func main() {
 	// Enable gzip compression
 	e.Use(middleware.Gzip())
 
-	// Prometheus metrics middleware (before routes so all requests are counted)
-	e.Use(remittmiddleware.Prometheus())
-
 	// Serve up the static UI...
 	e.Static("/ui", "ui")
 	e.File("/favicon.ico", "ui/favicon.ico")
@@ -106,7 +122,19 @@ func main() {
 		return c.Redirect(http.StatusMovedPermanently, "./ui/index.html")
 	})
 
-	// Prometheus /metrics endpoint
+	// Prometheus /metrics endpoint.
+	//
+	// NOTE (measured against echo v5, not assumed): in echo v5 e.Use(...) builds
+	// ONE global chain that every request runs through, no matter whether the
+	// route was registered before or after that e.Use call (echo.go:
+	// buildRouterChains + serveHTTP use e.chain for all requests). Registering
+	// this route before the /api group therefore does NOT put it outside
+	// BasicAuth: an unauthenticated scrape gets 401, both with Prometheus
+	// outermost and with the previous (Prometheus innermost) order. Exempting
+	// /metrics needs a BasicAuth Skipper or route-level middleware, which is a
+	// change to auth behaviour and was left alone here; with Prometheus
+	// outermost those 401s are at least visible now
+	// (http_requests_total{path="/metrics",status="401"}).
 	e.GET("/metrics", echo.WrapHandler(promhttp.Handler()))
 
 	api := e.Group("/api")

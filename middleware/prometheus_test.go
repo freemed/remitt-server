@@ -23,15 +23,29 @@
 //     metric vars are unexported; an external middleware_test package cannot
 //     reference them at all.
 //
-// Tests whose names start with TestPrometheusBug... PIN CURRENT (buggy)
-// behaviour found while writing this suite. They are expected to trip (and be
-// updated) when the bugs reported alongside this file are fixed — they exist so
-// the behaviour is visible and regression-tested, not to bless it.
+// # What this suite pins
+//
+// The middleware records the status the CLIENT received, counts requests that
+// an inner middleware short-circuits (BasicAuth 401s), and records requests
+// that panic. The four tests that used to pin the opposite (buggy) behaviour
+// have been retargeted and renamed off the "Bug" framing:
+// TestPrometheusHTTPErrorStatusMatchesClientStatus,
+// TestPrometheusGzipWrappedStatusMatchesClientStatus,
+// TestPrometheusPanickedRequestIsRecorded and
+// TestPrometheusRejectedAuthRequestsAreCounted.
+//
+// Every test builds its server the way cmd/remitt-server/main.go does:
+// Prometheus is registered OUTERMOST (first), and anything that can
+// short-circuit the chain or render an error lives INSIDE it. Registering
+// Prometheus inside such a middleware is what made 401s invisible and made
+// error statuses unobservable, so the helper below mirrors production order
+// and TestRemittServerRegistersPrometheusOutermost guards main.go itself.
 package middleware
 
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -49,16 +63,18 @@ const (
 // series is one gathered metric line, flattened to label name -> value.
 type series map[string]string
 
-// newTestServer builds an echo server whose only middleware is the package
-// under test (plus anything the caller passes in outer, which is applied
-// BEFORE Prometheus so it ends up outside it — matching main.go, where the
-// outer middleware list is registered before remittmiddleware.Prometheus()).
-func newTestServer(outer ...echo.MiddlewareFunc) *echo.Echo {
+// newTestServer builds an echo server wired like cmd/remitt-server/main.go:
+// Prometheus is registered FIRST, so it ends up outside every inner middleware
+// and observes requests that an inner middleware short-circuits (BasicAuth) or
+// renders through Echo's HTTPErrorHandler (Recover, the error handler itself).
+// Middleware passed in inner is registered INSIDE Prometheus, mirroring main.go
+// where Recover/BasicAuth/Gzip all sit inside it.
+func newTestServer(inner ...echo.MiddlewareFunc) *echo.Echo {
 	e := echo.New()
-	for _, mw := range outer {
+	e.Use(Prometheus())
+	for _, mw := range inner {
 		e.Use(mw)
 	}
-	e.Use(Prometheus())
 	return e
 }
 
@@ -256,7 +272,6 @@ func TestPrometheusUnmatchedRouteDoesNotUseRawURLLabel(t *testing.T) {
 	if len(got) == 0 {
 		t.Fatalf("no series with the empty path label; echo v5 sets an empty route path for 404s, so one is expected")
 	}
-	t.Logf("unmatched requests are labelled path=\"\" (all 404s share one series) — see the style/aggregation note in the test report")
 }
 
 // ---------------------------------------------------------------------------
@@ -311,24 +326,22 @@ func TestPrometheusStatusLabelForExplicitWrites(t *testing.T) {
 	}
 }
 
-// TestPrometheusBugHTTPErrorStatusRecordedAs200 pins a REAL BUG.
+// TestPrometheusHTTPErrorStatusMatchesClientStatus (formerly
+// TestPrometheusBugHTTPErrorStatusRecordedAs200).
 //
-// prometheus.go:61,65-68 reads the status from the response writer and records
-// it immediately after next(c) returns — but a handler that merely RETURNS an
-// error has not written anything yet: echo renders it afterwards, in
-// Echo.HTTPErrorHandler (main.go:71-82), which runs in ServeHTTP *outside* the
-// middleware chain (echo.go: serveHTTP -> e.HTTPErrorHandler(c, err)). Because
-// Prometheus() is registered last (main.go:98) it is the innermost middleware,
-// so it always inspects the response before any error response exists.
+// A handler that merely RETURNS an error has written nothing: Echo renders it
+// afterwards, in Echo.HTTPErrorHandler, which runs in ServeHTTP *after* the
+// middleware chain returns (echo.go: serveHTTP -> e.HTTPErrorHandler). A
+// recorder that reads the response on the way out of next() sees no status and
+// must not invent "200" — error-rate alerting built on http_requests_total
+// would read zero for every 404/405/500.
 //
-// Result: every request whose status is produced by the error handler
-// (404/405, any echo.NewHTTPError returned by a handler, panics) is counted
-// with status="200" on an http_requests_total series, so error-rate alerting
-// built on this metric reads zero. (Requests rejected by a middleware that is
-// registered OUTSIDE Prometheus, such as BasicAuth at main.go:86, are a
-// different case — they never reach Prometheus at all; see
-// TestPrometheusBugRejectedAuthRequestsAreNotCounted.)
-func TestPrometheusBugHTTPErrorStatusRecordedAs200(t *testing.T) {
+// The middleware therefore defers the recording of this path to
+// Response.Before, which Echo fires from inside Response.WriteHeader with the
+// final code. The assertion below is that the recorded status EQUALS the status
+// the client received (the 404 the client sees is the 404 in the metric), and
+// that no status="200" series is minted for the route.
+func TestPrometheusHTTPErrorStatusMatchesClientStatus(t *testing.T) {
 	t.Parallel()
 
 	e := newTestServer()
@@ -341,30 +354,64 @@ func TestPrometheusBugHTTPErrorStatusRecordedAs200(t *testing.T) {
 		t.Fatalf("response code = %d, want %d (echo rendered the error)", rec.Code, http.StatusNotFound)
 	}
 
-	if v := counterValue(t, http.MethodGet, "/mt6/err404", "200"); v != 1 {
-		t.Errorf("BUG PIN: expected the current (wrong) status=200 series to hold 1, got %v", v)
-	}
 	if got := matching(t, metricRequestsTotal, series{
-		"method": http.MethodGet, "path": "/mt6/err404", "status": "404",
+		"method": http.MethodGet, "path": "/mt6/err404", "status": "200",
 	}); len(got) != 0 {
-		t.Logf("status=404 is now recorded — the bug pinned here appears fixed, update this test")
+		t.Errorf("handler-returned error still recorded as 200: %v", got)
 	}
-	t.Logf("BUG: GET /mt6/err404 answered 404 but recorded http_requests_total{status=\"200\"} (middleware/prometheus.go:65-68 reads resp.Status before Echo.HTTPErrorHandler runs)")
+	if v := counterValue(t, http.MethodGet, "/mt6/err404", "404"); v != 1 {
+		t.Errorf("http_requests_total{path=/mt6/err404,status=404} = %v, want 1 (the status the client received)", v)
+	}
+	count, _ := histogramObservation(t, http.MethodGet, "/mt6/err404", "404")
+	if count != 1 {
+		t.Errorf("http_request_duration_seconds{path=/mt6/err404,status=404} sample count = %d, want 1", count)
+	}
 }
 
-// TestPrometheusBugGzipWrappedStatusRecordedAs200 pins a second REAL BUG.
+// TestPrometheusCommittedStatusWinsWhenHandlerReturnsError covers the branch
+// where a handler writes a status and THEN returns an error. The response is
+// already committed, so the client keeps what was written and Echo's error
+// render cannot change it (Response.WriteHeader refuses to rewrite a committed
+// response); the metric must agree with the client instead of reporting the
+// error's code, and must not record twice.
+func TestPrometheusCommittedStatusWinsWhenHandlerReturnsError(t *testing.T) {
+	t.Parallel()
+
+	e := newTestServer()
+	e.GET("/mt12/committed", func(c *echo.Context) error {
+		if err := c.String(http.StatusTeapot, "already sent"); err != nil {
+			return err
+		}
+		return echo.NewHTTPError(http.StatusInternalServerError, "too late")
+	})
+
+	rec := doRequest(e, http.MethodGet, "/mt12/committed", nil)
+	if rec.Code != http.StatusTeapot {
+		t.Fatalf("response code = %d, want %d (the status already on the wire)", rec.Code, http.StatusTeapot)
+	}
+	if v := counterValue(t, http.MethodGet, "/mt12/committed", "418"); v != 1 {
+		t.Errorf("http_requests_total{path=/mt12/committed,status=418} = %v, want 1", v)
+	}
+	if got := matching(t, metricRequestsTotal, series{"path": "/mt12/committed", "status": "500"}); len(got) != 0 {
+		t.Errorf("recorded a status the client never received: %v", got)
+	}
+}
+
+// TestPrometheusGzipWrappedStatusMatchesClientStatus (formerly
+// TestPrometheusBugGzipWrappedStatusRecordedAs200).
 //
-// The status is read with `c.Response().(*echo.Response)`
-// (prometheus.go:66-68) and silently falls back to 200 when the assertion
-// fails. Echo's Gzip middleware replaces the response writer with a
+// Echo's Gzip middleware replaces the response writer with a
 // *middleware.gzipResponseWriter whenever the client sends
-// "Accept-Encoding: gzip" (compress.go: c.SetResponse(grw)). main.go registers
-// Gzip (main.go:95) BEFORE remittmiddleware.Prometheus() (main.go:98), i.e.
-// Gzip is OUTER, so for every gzip-capable client the assertion fails and the
-// recorded status is hardcoded 200 — even for a status the handler explicitly
-// wrote. The same server without the Accept-Encoding header records correctly,
-// which isolates the wrapping as the trigger.
-func TestPrometheusBugGzipWrappedStatusRecordedAs200(t *testing.T) {
+// "Accept-Encoding: gzip" (compress.go: c.SetResponse(grw)), and that type is
+// not *echo.Response. A recorder that type-asserts the writer and silently
+// falls back to 200 therefore recorded a bogus 200 for every gzip-capable
+// client (i.e. every browser), even for a status the handler explicitly wrote.
+//
+// The middleware reads the status from the context's *echo.Response — reached
+// through echo.UnwrapResponse, which walks the wrapper chain — and that is the
+// writer every wrapper commits through, so the recorded status is the one the
+// client got. The same route without Accept-Encoding is kept as the control.
+func TestPrometheusGzipWrappedStatusMatchesClientStatus(t *testing.T) {
 	t.Parallel()
 
 	e := newTestServer(echoMW.Gzip())
@@ -380,39 +427,71 @@ func TestPrometheusBugGzipWrappedStatusRecordedAs200(t *testing.T) {
 		t.Fatalf("plain response code = %d, want %d", plain.Code, http.StatusTeapot)
 	}
 
-	// Control: without gzip wrapping the status IS recorded correctly.
+	// Control: without gzip wrapping the status is recorded correctly.
 	if v := counterValue(t, http.MethodGet, "/mt7/plain", "418"); v != 1 {
 		t.Errorf("control: http_requests_total{path=/mt7/plain,status=418} = %v, want 1", v)
 	}
 
-	// BUG PIN: with gzip wrapping the handler-written 418 is recorded as 200.
-	if v := counterValue(t, http.MethodGet, "/mt7/teapot", "200"); v != 1 {
-		t.Errorf("BUG PIN: expected the wrong status=200 series for /mt7/teapot to hold 1, got %v", v)
-	}
+	// The gzip-wrapped request must be recorded with the same status the client
+	// received, not with the old hardcoded 200.
 	if got := matching(t, metricRequestsTotal, series{
-		"method": http.MethodGet, "path": "/mt7/teapot", "status": "418",
+		"method": http.MethodGet, "path": "/mt7/teapot", "status": "200",
 	}); len(got) != 0 {
-		t.Logf("status=418 is now recorded for gzip clients — the bug pinned here appears fixed, update this test")
+		t.Errorf("gzip-wrapped request still recorded as 200: %v", got)
 	}
-	t.Logf("BUG: with Gzip registered outside Prometheus (main.go:95 vs main.go:98) any request carrying Accept-Encoding: gzip is recorded status=\"200\" (middleware/prometheus.go:66 type assertion fails on *middleware.gzipResponseWriter, which only exposes Unwrap())")
+	if v := counterValue(t, http.MethodGet, "/mt7/teapot", "418"); v != 1 {
+		t.Errorf("http_requests_total{path=/mt7/teapot,status=418} = %v, want 1 (gzip client saw 418)", v)
+	}
+	count, _ := histogramObservation(t, http.MethodGet, "/mt7/teapot", "418")
+	if count != 1 {
+		t.Errorf("http_request_duration_seconds{path=/mt7/teapot,status=418} sample count = %d, want 1", count)
+	}
+}
+
+// TestPrometheusRouterLevelNotFoundIsRecorded is the 404/405 half of the same
+// fix: Echo's router answers an unmatched request by returning ErrNotFound from
+// its not-found handler, so the 404 is rendered by HTTPErrorHandler *after* the
+// chain returns, exactly like a handler-returned error. Both statuses must end
+// up on the metric — the delta assertion below proves this request (and not just
+// some other test's) was recorded, without depending on test order.
+func TestPrometheusRouterLevelNotFoundIsRecorded(t *testing.T) {
+	t.Parallel()
+
+	e := newTestServer()
+	before := counterValue(t, http.MethodGet, "", "404")
+
+	rec := doRequest(e, http.MethodGet, "/mt11/never/registered", nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unmatched route response code = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+
+	after := counterValue(t, http.MethodGet, "", "404")
+	if after <= before {
+		t.Errorf("http_requests_total{path=\"\",status=404} = %v, want more than the %v observed before the unmatched request", after, before)
+	}
+	if got := matching(t, metricRequestsTotal, series{"path": "", "status": "200"}); len(got) != 0 {
+		t.Errorf("unmatched route recorded as 200: %v", got)
+	}
 }
 
 // ---------------------------------------------------------------------------
 // 5. Panics
 // ---------------------------------------------------------------------------
 
-// TestPrometheusBugPanickedRequestIsNeverRecorded documents what IS wired and
-// the gap: with echo's Recover OUTSIDE Prometheus (exactly main.go:85 vs 98) a
-// panic is converted into a 500 for the client and the in-flight gauge is
-// correctly decremented by the defer at prometheus.go:59 — but the recording
-// block at prometheus.go:63-76 never runs, because a panic unwinds past it.
-// The request leaves no trace in http_requests_total or
-// http_request_duration_seconds at all, so panicking endpoints are invisible to
-// both throughput and latency dashboards (and to the error-rate metric even if
-// the status-label bug above were fixed).
-func TestPrometheusBugPanickedRequestIsNeverRecorded(t *testing.T) {
-	// Not parallel: it asserts on the shared in-flight gauge (see the note on
-	// TestPrometheusCounterAndInFlightGauge).
+// TestPrometheusPanickedRequestIsRecorded (formerly
+// TestPrometheusBugPanickedRequestIsNeverRecorded).
+//
+// Recover converts a panic into an error, which ServeHTTP hands to
+// HTTPErrorHandler *after* the middleware chain returns. The request used to
+// leave no trace at all: the recording block was skipped by the unwind, so
+// panicking endpoints were invisible in http_requests_total AND
+// http_request_duration_seconds. It is now recorded with the 500 the client
+// received (via the same Response.Before path as any other handler error), while
+// the in-flight gauge still returns to zero.
+//
+// Not parallel: it asserts on the shared in-flight gauge (see the note on
+// TestPrometheusCounterAndInFlightGauge).
+func TestPrometheusPanickedRequestIsRecorded(t *testing.T) {
 	e := newTestServer(echoMW.Recover())
 	e.GET("/mt8/panic", func(c *echo.Context) error { panic("boom") })
 	e.GET("/mt8/ok", func(c *echo.Context) error { return c.String(http.StatusOK, "ok") })
@@ -428,49 +507,79 @@ func TestPrometheusBugPanickedRequestIsNeverRecorded(t *testing.T) {
 		t.Errorf("control: counter for /mt8/ok = %v, want 1", v)
 	}
 
-	if got := matching(t, metricRequestsTotal, series{"path": "/mt8/panic"}); len(got) != 0 {
-		t.Logf("the panicked request is now counted (%v) — the gap documented here appears fixed, update this test", got)
+	if v := counterValue(t, http.MethodGet, "/mt8/panic", "500"); v != 1 {
+		t.Errorf("http_requests_total{path=/mt8/panic,status=500} = %v, want 1 (the panicked request must be counted)", v)
+	}
+	if got := matching(t, metricRequestsTotal, series{"path": "/mt8/panic", "status": "200"}); len(got) != 0 {
+		t.Errorf("panicked request recorded as 200: %v", got)
 	}
 	count, _ := histogramObservation(t, http.MethodGet, "/mt8/panic", "500")
-	if count != 0 {
-		t.Logf("panicked request now observed in the histogram (count=%d) — update this test", count)
+	if count != 1 {
+		t.Errorf("http_request_duration_seconds{path=/mt8/panic,status=500} sample count = %d, want 1", count)
 	}
 
-	// The in-flight gauge is the one thing that DOES work on the panic path.
+	// The in-flight gauge must still return to zero on the panic path.
 	if v := testutil.ToFloat64(httpRequestsInFlight); v != 0 {
 		t.Errorf("in-flight gauge after a panic = %v, want 0", v)
 	}
-	t.Logf("GAP: a panicking request returns 500 but is absent from http_requests_total and http_request_duration_seconds (middleware/prometheus.go:61-76 run only on a normal return)")
 }
 
-// TestPrometheusBugRejectedAuthRequestsAreNotCounted pins a third finding,
-// this one about middleware ORDER rather than about prometheus.go itself.
+// TestPrometheusPanicWithoutRecoverIsStillRecorded covers the panic that no
+// inner Recover converts into an error — Echo's Recover re-panics
+// http.ErrAbortHandler, and a deployment need not wire Recover at all. Such a
+// panic unwinds through the metric middleware and out of ServeHTTP, so
+// HTTPErrorHandler is never called and there is no status to observe; the
+// middleware records the attempt (500, since the server aborts the connection)
+// from a deferred recover before re-panicking, so the request is not lost.
+func TestPrometheusPanicWithoutRecoverIsStillRecorded(t *testing.T) {
+	// Not parallel: asserts on the shared in-flight gauge.
+	e := newTestServer() // no Recover: the panic escapes ServeHTTP
+	e.GET("/mt10/panic", func(c *echo.Context) error { panic("boom without recover") })
+
+	func() {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Errorf("expected the panic to propagate out of ServeHTTP when no Recover is registered")
+			}
+		}()
+		doRequest(e, http.MethodGet, "/mt10/panic", nil)
+	}()
+
+	if v := counterValue(t, http.MethodGet, "/mt10/panic", "500"); v != 1 {
+		t.Errorf("http_requests_total{path=/mt10/panic,status=500} = %v, want 1", v)
+	}
+	count, _ := histogramObservation(t, http.MethodGet, "/mt10/panic", "500")
+	if count != 1 {
+		t.Errorf("http_request_duration_seconds{path=/mt10/panic,status=500} sample count = %d, want 1", count)
+	}
+	if v := testutil.ToFloat64(httpRequestsInFlight); v != 0 {
+		t.Errorf("in-flight gauge after an un-recovered panic = %v, want 0", v)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 6. Middleware order
+// ---------------------------------------------------------------------------
+
+// TestPrometheusRejectedAuthRequestsAreCounted (formerly
+// TestPrometheusBugRejectedAuthRequestsAreNotCounted).
 //
-// main.go registers Prometheus last (main.go:98), i.e. innermost, so it only
-// runs after every outer middleware has called next. A middleware that
-// short-circuits and returns an error — BasicAuth (main.go:86) on a missing or
-// bad credential, the classic 401 — never invokes the inner chain, so the
-// request produces NO series at all in http_requests_total or
-// http_request_duration_seconds. Rejected-auth traffic is therefore completely
-// invisible to the metrics (not merely mislabelled), which is the worst case
-// for a security dashboard; the same holds for any future outer middleware that
-// short-circuits (IP allow-lists, rate limiters, CSRF, ...).
-//
-// The fix is ordering, not maths: register Prometheus FIRST (outermost, e.g.
-// before Recover) so it observes the final status via echo's HTTPErrorHandler
-// path, or record from a Pre()/HTTPErrorHandler hook. Both change production
-// wiring in main.go, which is outside this task's scope, so this test pins the
-// current behaviour.
-func TestPrometheusBugRejectedAuthRequestsAreNotCounted(t *testing.T) {
+// This one is about ORDER, not about the status read. A request rejected by
+// BasicAuth (missing/bad credentials -> 401) never invokes the chain inside it,
+// so a Prometheus middleware registered INSIDE BasicAuth never sees it and the
+// request produced no series at all: rejected authentication — the most
+// security-relevant traffic there is — was completely invisible. Registering
+// Prometheus outside BasicAuth counts it, and the 401 the client received is the
+// 401 on the status label.
+func TestPrometheusRejectedAuthRequestsAreCounted(t *testing.T) {
 	t.Parallel()
 
+	// Same relative order as main.go: Prometheus outermost, BasicAuth inside it.
 	e := echo.New()
-	// Same relative order as main.go:35-98: an outer middleware that
-	// short-circuits, then Prometheus inside it.
+	e.Use(Prometheus())
 	e.Use(echoMW.BasicAuth(func(c *echo.Context, username, password string) (bool, error) {
 		return false, nil
 	}))
-	e.Use(Prometheus())
 	e.GET("/mt9/protected", func(c *echo.Context) error { return c.String(http.StatusOK, "ok") })
 
 	rec := doRequest(e, http.MethodGet, "/mt9/protected", nil)
@@ -478,10 +587,84 @@ func TestPrometheusBugRejectedAuthRequestsAreNotCounted(t *testing.T) {
 		t.Fatalf("unauthenticated response code = %d, want %d", rec.Code, http.StatusUnauthorized)
 	}
 
-	if got := matching(t, metricRequestsTotal, series{"path": "/mt9/protected"}); len(got) != 0 {
-		t.Logf("rejected-auth requests are now counted (%v) — the gap documented here appears fixed, update this test", got)
+	if v := counterValue(t, http.MethodGet, "/mt9/protected", "401"); v != 1 {
+		t.Errorf("http_requests_total{path=/mt9/protected,status=401} = %v, want 1 (rejected auth must be counted)", v)
 	}
-	t.Logf("GAP: a 401 rejected by BasicAuth produces no http_requests_total series at all (main.go:98 registers Prometheus inside BasicAuth at main.go:86, so the short-circuit never reaches it)")
+	count, _ := histogramObservation(t, http.MethodGet, "/mt9/protected", "401")
+	if count != 1 {
+		t.Errorf("http_request_duration_seconds{path=/mt9/protected,status=401} sample count = %d, want 1", count)
+	}
+	if got := matching(t, metricRequestsTotal, series{"path": "/mt9/protected", "status": "200"}); len(got) != 0 {
+		t.Errorf("rejected request recorded as 200: %v", got)
+	}
+}
+
+// TestRemittServerRegistersPrometheusOutermost is the wiring guard for the order
+// this middleware requires. It reads cmd/remitt-server/main.go as source: main()
+// is not callable from a test (it loads config and a database), and the
+// registration is a plain sequence of e.Use(...) calls inside it, so the source
+// IS the wiring. In echo v5 those calls build one global chain that every route
+// runs through, which is why the order is load-bearing:
+//   - Prometheus must be FIRST so nothing registered outside it can
+//     short-circuit a request before it is observed (BasicAuth 401s).
+//   - Recover and BasicAuth must come AFTER it so the statuses they produce
+//     (500 for a panic, 401 for rejected credentials) are observed too.
+func TestRemittServerRegistersPrometheusOutermost(t *testing.T) {
+	t.Parallel()
+
+	const mainGoPath = "../cmd/remitt-server/main.go"
+	src, err := os.ReadFile(mainGoPath)
+	if err != nil {
+		t.Fatalf("read %s: %v (this guard asserts the production middleware order and must run from the middleware package directory)", mainGoPath, err)
+	}
+
+	var uses []string
+	for _, line := range strings.Split(string(src), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "//") {
+			continue
+		}
+		if strings.Contains(trimmed, "e.Use(") {
+			uses = append(uses, trimmed)
+		}
+	}
+	if len(uses) == 0 {
+		t.Fatalf("no e.Use(...) calls found in %s", mainGoPath)
+	}
+
+	indexOf := func(needle string) int {
+		for i, u := range uses {
+			if strings.Contains(u, needle) {
+				return i
+			}
+		}
+		return -1
+	}
+
+	promIdx := indexOf("remittmiddleware.Prometheus()")
+	if promIdx != 0 {
+		t.Errorf("Prometheus is registered at position %d of the %d e.Use(...) calls in %s, want position 0 (outermost):\n%s",
+			promIdx, len(uses), mainGoPath, strings.Join(uses, "\n"))
+	}
+	for _, required := range []string{"middleware.Recover()", "middleware.BasicAuth("} {
+		idx := indexOf(required)
+		if idx == -1 {
+			t.Errorf("%s is no longer registered in %s; this guard needs updating with the new wiring", required, mainGoPath)
+			continue
+		}
+		if idx < promIdx {
+			t.Errorf("%s is registered at position %d, before Prometheus (position %d); it must be INSIDE Prometheus or the status it renders (401/500) is never recorded:\n%s",
+				required, idx, promIdx, strings.Join(uses, "\n"))
+		}
+	}
+
+	// /metrics is served by the root Echo instance. Note that in echo v5 a
+	// single global chain built from e.Use(...) serves EVERY route regardless of
+	// registration order, so "registered before the /api group" is not by itself
+	// an auth exemption — see the report accompanying this change.
+	if !strings.Contains(string(src), `e.GET("/metrics"`) {
+		t.Errorf(`no e.GET("/metrics", ...) registration found in %s; the scrape endpoint must stay on the root Echo instance`, mainGoPath)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -501,14 +684,14 @@ func TestPrometheusBugRejectedAuthRequestsAreNotCounted(t *testing.T) {
 // possible.
 func TestPrometheusMetricNamesAreGlobalInDefaultRegistry(t *testing.T) {
 	// (a) An identical descriptor (same name, help and label names) collides
-	// with the metric registered by prometheus.go:15-21.
+	// with the metric registered by prometheus.go.
 	dup := recoverPanic(t, func() {
 		prometheus.MustRegister(prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: metricRequestsTotal,
-				Help: "Total number of HTTP requests.", // identical to prometheus.go:18
+				Help: "Total number of HTTP requests.", // identical to prometheus.go
 			},
-			[]string{"method", "path", "status"}, // identical to prometheus.go:20
+			[]string{"method", "path", "status"}, // identical to prometheus.go
 		))
 	})
 	already, ok := dup.(prometheus.AlreadyRegisteredError)
