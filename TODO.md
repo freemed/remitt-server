@@ -182,6 +182,50 @@ contract, and each flipped test was RED-verified against the reverted code first
    while accepting short junk; `FromContext` reported a typed-nil user as found.
    All fixed.
 
+### ALSO FOUND, NOT YET FIXED: nothing ever enqueues a job, so the pipeline cannot be triggered
+
+- `jobQueueChannel` (`jobqueue/jobqueue.go:42`) is created and only ever READ
+  (`jobqueue.go:266`); `grep -rn jobQueueChannel --include=*.go .` returns exactly
+  those two lines. There is no enqueue function, no database poller, and `api/`
+  does not import `jobqueue` at all — so `api.PayloadInsert` stores a payload row,
+  returns its id, and **nothing ever processes it**. `executeJob`
+  (`jobqueue.go:289`), the whole render → translate → transport chain, is
+  unreachable in production however well its parts work.
+- The Java original fed the queue from the database: `ControlThread` polls
+  `tProcessor` for queued work (see `ControlThread.java:527-532`, which reasons
+  about `processorId` being already defined or `-1` for a wait state) and
+  dispatches it. The Go port has the workers, the dispatcher and the pipeline but
+  none of the feeder.
+- Consequence for the "do the transports work?" question: even with the registry
+  names, host-key policy and option wiring all correct, no job is ever handed to a
+  worker. Driving `executeJob` directly (done for the live-database run) is the
+  only way to exercise the chain today.
+
+### FIXED 2026-09-15: the database bootstrap could not migrate
+
+Found by standing up a real MySQL and running the application's own `InitDb`.
+Three defects, in `model/db.go`:
+
+- The migrate **file-source driver was never imported**, so `MigrateDb` failed
+  with `source driver: unknown driver file (forgotton import?)` on every startup.
+  Migrations had never been able to run; on a fresh database the server started
+  against a schema it never created.
+- `InitDb` **discarded `MigrateDb`'s error**, so a migration that never ran looked
+  identical to one that succeeded. It is fatal now unless the error is
+  `migrate.ErrNoChange`.
+- `MigrateDb` applied `m.Steps(2)`, which coincidentally covered the two
+  migrations that exist and would silently skip every future one. It applies all
+  pending migrations now.
+- Also fixed: **`database.host` was ignored entirely** when the DSN was built
+  (`user:pass@/db?flags`), pinning every deployment to the driver's default
+  address even though the sample config carries `tcp(127.0.0.1:3306)` — the
+  driver's `network(addr)` form that belongs exactly there. `dataSourceName()`
+  honours it; an empty host keeps the old behaviour.
+- **Deployment requirement this exposed:** on MySQL 8 the legacy schema's stored
+  functions are refused while binary logging is on unless
+  `log_bin_trust_function_creators=1` is set (error 1418). Verified end to end
+  against MySQL 8.0.46: fresh database → `version=2 dirty=0`, 19 tables, seed rows.
+
 ### ALSO FOUND, NOT YET FIXED: the transport plugins are never given their options
 
 - `jobqueue.executeJob` instantiates the transporter, calls `SetContext(ctx)` and
