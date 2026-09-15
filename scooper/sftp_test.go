@@ -2,16 +2,25 @@ package scooper
 
 import (
 	"bytes"
+	"crypto/ed25519"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/freemed/remitt-server/config"
+	"github.com/pkg/sftp"
+	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 // newConfiguredSftpScooper builds an SftpScooper with exactly the parameters
@@ -53,6 +62,333 @@ func closedLoopbackPort(t *testing.T) (string, int) {
 		t.Fatalf("close loopback listener: %v", err)
 	}
 	return "127.0.0.1", addr.Port
+}
+
+// ---------------------------------------------------------------------------
+// Host key policy
+//
+// The scooper used to hardcode ssh.InsecureIgnoreHostKey(); it now follows the
+// same policy as the transports (paths.known-hosts, or the explicit
+// sftp-insecure-ignore-hostkey opt-in, see common.HostKeyCallback). The
+// helpers below install a policy for one test, observe whether a connection was
+// attempted at all, and stand up a real SSH/SFTP server in-process.
+// ---------------------------------------------------------------------------
+
+// withHostKeyPolicy installs a host key policy for the duration of the test and
+// restores the previous configuration afterwards.
+func withHostKeyPolicy(t *testing.T, knownHostsPath string, insecureIgnoreHostKey bool) {
+	t.Helper()
+
+	prev := config.Config
+	cfg := config.AppConfig{}
+	if prev != nil {
+		cfg = *prev
+	}
+	cfg.Paths.KnownHostsPath = knownHostsPath
+	cfg.SftpInsecureIgnoreHostKey = insecureIgnoreHostKey
+	config.Config = &cfg
+	t.Cleanup(func() { config.Config = prev })
+}
+
+// acceptedLoopback returns a listening loopback endpoint and a channel that
+// receives once a connection has been accepted, so a test can prove that the
+// scooper did - or did not - open a connection.
+func acceptedLoopback(t *testing.T) (string, int, <-chan struct{}) {
+	t.Helper()
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen on loopback: %v", err)
+	}
+	t.Cleanup(func() { _ = l.Close() })
+
+	addr, ok := l.Addr().(*net.TCPAddr)
+	if !ok {
+		t.Fatalf("listener address %v is not a *net.TCPAddr", l.Addr())
+	}
+
+	ch := make(chan struct{}, 1)
+	go func() {
+		conn, err := l.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		ch <- struct{}{}
+	}()
+
+	return "127.0.0.1", addr.Port, ch
+}
+
+// The credentials newConfiguredSftpScooper hands the scooper.
+const (
+	scoopTestUser = "sftpuser"
+	scoopTestPass = "sftppass"
+)
+
+// scoopTestServer is an in-process SSH server (password auth for
+// scoopTestUser/scoopTestPass) serving pkg/sftp's own server over a temporary
+// directory, which is what newConfiguredSftpScooper is pointed at.
+type scoopTestServer struct {
+	host   string
+	port   int
+	dir    string
+	pubKey ssh.PublicKey
+	conns  atomic.Int64
+}
+
+func startScoopTestServer(t *testing.T) *scoopTestServer {
+	t.Helper()
+
+	dir := t.TempDir()
+
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate server host key: %v", err)
+	}
+	signer, err := ssh.NewSignerFromKey(priv)
+	if err != nil {
+		t.Fatalf("server host key signer: %v", err)
+	}
+
+	cfg := &ssh.ServerConfig{
+		PasswordCallback: func(c ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
+			if c.User() == scoopTestUser && string(pass) == scoopTestPass {
+				return nil, nil
+			}
+			return nil, fmt.Errorf("test sftp server: access denied for %q", c.User())
+		},
+	}
+	cfg.AddHostKey(signer)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	addr, ok := ln.Addr().(*net.TCPAddr)
+	if !ok {
+		t.Fatalf("listener address %v is not a *net.TCPAddr", ln.Addr())
+	}
+
+	srv := &scoopTestServer{
+		host:   "127.0.0.1",
+		port:   addr.Port,
+		dir:    dir,
+		pubKey: signer.PublicKey(),
+	}
+
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			srv.conns.Add(1)
+			go serveScoopTestConn(conn, cfg, dir)
+		}
+	}()
+
+	return srv
+}
+
+func serveScoopTestConn(conn net.Conn, cfg *ssh.ServerConfig, dir string) {
+	sconn, chans, reqs, err := ssh.NewServerConn(conn, cfg)
+	if err != nil {
+		_ = conn.Close()
+		return
+	}
+	defer sconn.Close()
+	go ssh.DiscardRequests(reqs)
+
+	for newChan := range chans {
+		if newChan.ChannelType() != "session" {
+			_ = newChan.Reject(ssh.UnknownChannelType, "only session is supported")
+			continue
+		}
+		ch, chReqs, err := newChan.Accept()
+		if err != nil {
+			continue
+		}
+		go func(ch ssh.Channel, in <-chan *ssh.Request) {
+			defer ch.Close()
+			for r := range in {
+				if r.Type == "subsystem" && len(r.Payload) >= 4 && string(r.Payload[4:]) == "sftp" {
+					_ = r.Reply(true, nil)
+					s, err := sftp.NewServer(ch, sftp.WithServerWorkingDirectory(dir))
+					if err != nil {
+						return
+					}
+					_ = s.Serve()
+					return
+				}
+				_ = r.Reply(false, nil)
+			}
+		}(ch, chReqs)
+	}
+}
+
+// address is the host:port form of the endpoint the scooper must dial.
+func (s *scoopTestServer) address() string { return fmt.Sprintf("%s:%d", s.host, s.port) }
+
+// knownHostsFile writes this server's real host key into a known_hosts file.
+func (s *scoopTestServer) knownHostsFile(t *testing.T) string {
+	t.Helper()
+	return writeScoopKnownHosts(t, knownhosts.Line([]string{s.address()}, s.pubKey)+"\n")
+}
+
+// knownHostsFileWithDifferentKey records the endpoint under a host key the
+// server does not present.
+func (s *scoopTestServer) knownHostsFileWithDifferentKey(t *testing.T) string {
+	t.Helper()
+
+	_, otherPriv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate mismatched host key: %v", err)
+	}
+	otherSigner, err := ssh.NewSignerFromKey(otherPriv)
+	if err != nil {
+		t.Fatalf("mismatched host key signer: %v", err)
+	}
+	return writeScoopKnownHosts(t, knownhosts.Line([]string{s.address()}, otherSigner.PublicKey())+"\n")
+}
+
+func writeScoopKnownHosts(t *testing.T, content string) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "known_hosts")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write known_hosts: %v", err)
+	}
+	return path
+}
+
+// put creates a file the scooper can download.
+func (s *scoopTestServer) put(t *testing.T, name string, content []byte) {
+	t.Helper()
+
+	if err := os.WriteFile(filepath.Join(s.dir, name), content, 0o600); err != nil {
+		t.Fatalf("write %q on the server: %v", name, err)
+	}
+}
+
+// TestSftpScooper_Scoop_FailsClosedWithoutHostKeyPolicy pins the fail-closed
+// contract: with neither paths.known-hosts nor sftp-insecure-ignore-hostkey
+// configured the scoop must report a configuration error naming both options
+// and must not open a connection (it used to dial anything, silently accepting
+// any host key).
+func TestSftpScooper_Scoop_FailsClosedWithoutHostKeyPolicy(t *testing.T) {
+	installFakeScooperDB(t)
+	host, port, accepted := acceptedLoopback(t)
+	withHostKeyPolicy(t, "", false)
+
+	s := newConfiguredSftpScooper(t, "user1", host, port, "remits")
+
+	results, err := s.Scoop()
+	if err == nil {
+		t.Fatal("Scoop() with neither host key option configured returned a nil error; want the fail-closed configuration error")
+	}
+	if results != nil {
+		t.Errorf("Scoop() results = %v; want nil alongside the error", results)
+	}
+	for _, want := range []string{
+		"sftpscooper:",
+		"ssh host key verification is not configured",
+		"paths.known-hosts",
+		"sftp-insecure-ignore-hostkey",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Scoop() error = %q; want it to contain %q", err.Error(), want)
+		}
+	}
+
+	select {
+	case <-accepted:
+		t.Error("Scoop opened an SSH connection despite the missing host key policy")
+	case <-time.After(500 * time.Millisecond):
+	}
+	t.Logf("fail-closed error text: %v", err)
+}
+
+// TestSftpScooper_Scoop_OptInDialsRealServerAndScoops covers the explicit
+// bypass end to end: with sftp-insecure-ignore-hostkey set the scoop opens a
+// real SSH/SFTP session, downloads the file and stores it.
+func TestSftpScooper_Scoop_OptInDialsRealServerAndScoops(t *testing.T) {
+	fake := installFakeScooperDB(t)
+	srv := startScoopTestServer(t)
+	srv.put(t, "remit.edi", []byte("fresh remittance"))
+	withHostKeyPolicy(t, "", true)
+
+	s := newConfiguredSftpScooper(t, "user1", srv.host, srv.port, srv.dir)
+
+	results, err := s.Scoop()
+	if err != nil {
+		t.Fatalf("Scoop() against a real SFTP server error = %v; want the scoop to complete", err)
+	}
+	if srv.conns.Load() == 0 {
+		t.Error("the SSH server accepted no connection; the handshake never happened")
+	}
+	if len(results) != 1 || results[0].Filename != "remit.edi" {
+		t.Fatalf("Scoop() results = %+v; want exactly remit.edi", results)
+	}
+	if string(results[0].Content) != "fresh remittance" {
+		t.Errorf("scooped content = %q; want the bytes on the server", results[0].Content)
+	}
+	if got := fake.insertCount(); got != 1 {
+		t.Errorf("tScooper inserts = %d; want 1", got)
+	}
+	t.Logf("real SSH handshake with the insecure opt-in: %s accepted %d connection(s) and %q was scooped and stored",
+		srv.address(), srv.conns.Load(), "remit.edi")
+}
+
+// TestSftpScooper_Scoop_KnownHostsVerifiesHostKey pins the verified path
+// against the same real server: with the server's key in paths.known-hosts the
+// scoop completes, and with a mismatched key it is rejected with nothing
+// scooped - the verification the hardcoded InsecureIgnoreHostKey() never did.
+func TestSftpScooper_Scoop_KnownHostsVerifiesHostKey(t *testing.T) {
+	t.Run("matching key scoops", func(t *testing.T) {
+		fake := installFakeScooperDB(t)
+		srv := startScoopTestServer(t)
+		srv.put(t, "remit.edi", []byte("fresh remittance"))
+		withHostKeyPolicy(t, srv.knownHostsFile(t), false)
+
+		s := newConfiguredSftpScooper(t, "user1", srv.host, srv.port, srv.dir)
+
+		results, err := s.Scoop()
+		if err != nil {
+			t.Fatalf("Scoop() against a known_hosts-verified server error = %v; want the scoop to complete", err)
+		}
+		if len(results) != 1 {
+			t.Fatalf("Scoop() results = %+v; want exactly one file", results)
+		}
+		if got := fake.insertCount(); got != 1 {
+			t.Errorf("tScooper inserts = %d; want 1", got)
+		}
+	})
+
+	t.Run("mismatched key is rejected", func(t *testing.T) {
+		fake := installFakeScooperDB(t)
+		srv := startScoopTestServer(t)
+		srv.put(t, "remit.edi", []byte("fresh remittance"))
+		withHostKeyPolicy(t, srv.knownHostsFileWithDifferentKey(t), false)
+
+		s := newConfiguredSftpScooper(t, "user1", srv.host, srv.port, srv.dir)
+
+		results, err := s.Scoop()
+		if err == nil {
+			t.Fatal("Scoop() with a mismatched known_hosts entry returned a nil error; the connection must be rejected")
+		}
+		if results != nil {
+			t.Errorf("Scoop() results = %v; want nil alongside the error", results)
+		}
+		if !strings.Contains(err.Error(), "sftpscooper: ssh dial") {
+			t.Errorf("Scoop() error = %q; want the rejected handshake surfaced on the dial", err.Error())
+		}
+		if got := fake.insertCount(); got != 0 {
+			t.Errorf("tScooper inserts = %d; want none over a rejected host key", got)
+		}
+	})
 }
 
 // TestSftpScooper_SetParameters_MapsConfigKeys is the input->output mapping
@@ -543,6 +879,11 @@ func TestSftpScooper_Scoop_QueriesDedupeByClassUserHostPath(t *testing.T) {
 	fake := installFakeScooperDB(t)
 	host, port := closedLoopbackPort(t)
 
+	// This test is about the dedupe query and the dial error that follows it,
+	// so the insecure host key opt-in is configured to get past the policy
+	// check; without it the scoop would fail closed before dialling.
+	withHostKeyPolicy(t, "", true)
+
 	s := newConfiguredSftpScooper(t, "user1", host, port, "remits")
 
 	// This run fails at the SSH dial (see the unreachable-server test); the
@@ -574,6 +915,11 @@ func TestSftpScooper_Scoop_QueriesDedupeByClassUserHostPath(t *testing.T) {
 func TestSftpScooper_Scoop_UnreachableServerIsReported(t *testing.T) {
 	fake := installFakeScooperDB(t)
 	host, port := closedLoopbackPort(t)
+
+	// The insecure opt-in is configured so the run reaches the dial this test
+	// is about (the fail-closed policy is covered by
+	// TestSftpScooper_Scoop_FailsClosedWithoutHostKeyPolicy).
+	withHostKeyPolicy(t, "", true)
 
 	s := newConfiguredSftpScooper(t, "user1", host, port, "remits")
 

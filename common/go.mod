@@ -19,6 +19,7 @@ require (
 	github.com/freemed/ratago/xslt v0.0.0-20260127145558-2a510afd68fb
 	github.com/freemed/remitt-server/config v0.0.0-20260409181504-5105c68ef4de
 	github.com/labstack/echo/v5 v5.1.1
+	golang.org/x/crypto v0.50.0
 	gopkg.in/gomail.v2 v2.0.0-20160411212932-81ebce5c23df
 )
 

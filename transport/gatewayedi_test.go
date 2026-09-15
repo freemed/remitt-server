@@ -2,19 +2,27 @@ package transport
 
 // gatewayedi_test.go pins the gatewayedi transport contract (gatewayedi.go):
 // configuration comes from the gatewayEdi* option keys, missing configuration
-// fails with a descriptive error before anything is dialled, the payload type
-// switch rejects unsupported input, and the connection is attempted against
-// exactly the configured host:port.
+// fails with a descriptive error before anything is dialled, an option that
+// cannot be coerced is reported by SetOptions, the payload type switch rejects
+// unsupported input, and the connection is attempted against exactly the
+// configured host:port.
 //
 // The Java original (GatewayEdiTransport extends SftpTransport) wraps the
-// payload in a ZIP container and pushes it with the SFTP connection, which is
-// skipped here with an explicit reason - see
-// TestGatewayEdi_Transport_ZipContainerRequiresSftpServer.
+// payload in a ZIP container and pushes it with the SFTP connection. That path
+// is exercised for real against an in-process SSH/SFTP server (see
+// startSftpTestServer in sftp_test.go), under both host key policies: the
+// known_hosts file for this server, and the explicit insecure opt-in.
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/freemed/remitt-server/model"
 	"github.com/freemed/remitt-server/model/user"
@@ -63,10 +71,13 @@ func TestGatewayEdi_Transport_ValidationErrors(t *testing.T) {
 			want: "gatewayedi: missing host, port, or username",
 		},
 		{
-			name: "wrong types are not coerced",
+			// Every documented key is present and correctly typed, but the
+			// values describe no host: SetOptions accepts this map and the
+			// plugin's own validation is what refuses to run.
+			name: "all options present but empty",
 			options: map[string]any{
-				"gatewayEdiHost": 127, "gatewayEdiPort": "22",
-				"gatewayEdiUsername": 42, "gatewayEdiPassword": true,
+				"gatewayEdiHost": "", "gatewayEdiPort": 0, "gatewayEdiUsername": "",
+				"gatewayEdiPassword": "", "gatewayEdiPath": "",
 			},
 			want: "gatewayedi: missing host, port, or username",
 		},
@@ -137,12 +148,21 @@ func TestGatewayEdi_Transport_RejectsUnsupportedPayloadType(t *testing.T) {
 }
 
 // TestGatewayEdi_Transport_DialsConfiguredHostPortButHandshakeCannotSucceed
-// pins that the gatewayEdi* keys are what get dialled, and pins the defect that
-// makes the plugin unable to deliver anything: gatewayedi.go builds an
-// ssh.ClientConfig without HostKeyCallback, so ssh.Dial always fails with
+// pinned the defect that made the plugin unable to deliver anything: an
+// ssh.ClientConfig without HostKeyCallback, so ssh.Dial always failed with
 // "ssh: must specify HostKeyCallback" right after connecting.
-func TestGatewayEdi_Transport_DialsConfiguredHostPortButHandshakeCannotSucceed(t *testing.T) {
+//
+// It is replaced by the two tests below: the corrected fail-closed contract
+// when no host key policy is configured, and a real handshake/upload when one
+// is.
+//
+// TestGatewayEdi_Transport_FailsClosedWithoutHostKeyPolicy pins the fail-closed
+// half: with neither paths.known-hosts nor sftp-insecure-ignore-hostkey
+// configured the plugin must report a configuration error naming both options
+// and must not connect to the configured endpoint at all.
+func TestGatewayEdi_Transport_FailsClosedWithoutHostKeyPolicy(t *testing.T) {
 	host, port, accepted := localSSHBait(t)
+	withHostKeyPolicy(t, "", false)
 
 	g := &GatewayEdi{}
 	u := &model.UserModel{Username: "bob", Id: 2}
@@ -152,8 +172,8 @@ func TestGatewayEdi_Transport_DialsConfiguredHostPortButHandshakeCannotSucceed(t
 	if err := g.SetOptions(map[string]any{
 		"gatewayEdiHost":     host,
 		"gatewayEdiPort":     port,
-		"gatewayEdiUsername": "bob",
-		"gatewayEdiPassword": "secret",
+		"gatewayEdiUsername": testSftpUser,
+		"gatewayEdiPassword": testSftpPass,
 		"gatewayEdiPath":     "/outbound",
 	}); err != nil {
 		t.Fatal(err)
@@ -161,22 +181,172 @@ func TestGatewayEdi_Transport_DialsConfiguredHostPortButHandshakeCannotSucceed(t
 
 	err := g.Transport("payload.x12", []byte("ISA*00*"))
 	if err == nil {
-		t.Fatal("Transport() against a non-SSH listener returned a nil error; the handshake failure must be surfaced")
+		t.Fatal("Transport() with neither host key option configured returned a nil error; want the fail-closed configuration error")
 	}
-	if !strings.Contains(err.Error(), "gatewayedi:") {
-		t.Errorf("Transport() error = %q; want it to be tagged with the gatewayedi plugin prefix", err.Error())
+	for _, want := range []string{
+		"gatewayedi:",
+		"ssh host key verification is not configured",
+		"paths.known-hosts",
+		"sftp-insecure-ignore-hostkey",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Transport() error = %q; want it to contain %q", err.Error(), want)
+		}
 	}
-	if !strings.Contains(err.Error(), "must specify HostKeyCallback") {
-		t.Fatalf("Transport() error = %q; want the HostKeyCallback failure - if the config was fixed, this test needs updating", err.Error())
-	}
-	if line := awaitConnection(t, accepted); line != "" {
-		t.Fatalf("peer sent %q; want no SSH identification string (current behaviour: the client closes the connection before the handshake)", line)
-	}
-	t.Log("pinned behaviour: the configured host:port is dialled, then ssh.Dial aborts with \"ssh: must specify HostKeyCallback\" (gatewayedi.go:66-72) - no file can ever be uploaded")
+	// The ZIP container is built before the dial, so the error must be the
+	// host key policy - and nothing may reach the endpoint.
+	awaitNoConnection(t, accepted, 500*time.Millisecond)
 }
 
-func TestGatewayEdi_Transport_ZipContainerRequiresSftpServer(t *testing.T) {
-	t.Skip("requires a live SFTP server: the ZIP container built at gatewayedi.go:55-63 is only observable on the far side of the SFTP upload (sftpClient.Create + Write at gatewayedi.go:85-93), and no in-process SFTP server is available in this suite")
+// TestGatewayEdi_Transport_KnownHostsVerifiesHostKeyAndUploads drives the
+// policy's primary path against a real, in-process SSH/SFTP server: the
+// server's own host key is in paths.known-hosts, so the handshake, the
+// authentication and the ZIP upload all complete.
+func TestGatewayEdi_Transport_KnownHostsVerifiesHostKeyAndUploads(t *testing.T) {
+	srv := startSftpTestServer(t)
+	withHostKeyPolicy(t, srv.knownHostsFile(t), false)
+
+	payload := []byte("ISA*00*          *00*          *ZZ*PAYER          *ZZ*SUBMITTER      *240101*1200*^*00501*000000001*0*P*:~")
+
+	g := &GatewayEdi{}
+	u := &model.UserModel{Username: "bob", Id: 2}
+	if err := g.SetContext(user.NewContext(context.Background(), u)); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.SetOptions(map[string]any{
+		"gatewayEdiHost":     srv.host,
+		"gatewayEdiPort":     srv.port,
+		"gatewayEdiUsername": testSftpUser,
+		"gatewayEdiPassword": testSftpPass,
+		"gatewayEdiPath":     srv.dir,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := g.Transport("payload.x12", payload); err != nil {
+		t.Fatalf("Transport() against a known_hosts-verified server error = %v; want the upload to complete", err)
+	}
+	if got := srv.acceptedConnections(); got == 0 {
+		t.Error("the SSH server accepted no connection; the handshake never happened")
+	}
+
+	// The uploaded file is the ZIP container, and it holds the payload.
+	zipped := srv.uploaded(t, "payload.x12.zip")
+	zr, err := zip.NewReader(bytes.NewReader(zipped), int64(len(zipped)))
+	if err != nil {
+		t.Fatalf("the uploaded file is not a readable ZIP archive: %v", err)
+	}
+	if len(zr.File) != 1 {
+		t.Fatalf("the uploaded ZIP holds %d entries; want 1", len(zr.File))
+	}
+	rc, err := zr.File[0].Open()
+	if err != nil {
+		t.Fatalf("open the ZIP entry: %v", err)
+	}
+	defer rc.Close()
+	unzipped, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("read the ZIP entry: %v", err)
+	}
+	if string(unzipped) != string(payload) {
+		t.Errorf("the uploaded ZIP contains %q; want the payload %q", unzipped, payload)
+	}
+	t.Logf("real SSH handshake under paths.known-hosts: %s verified the server key, authenticated and uploaded the ZIP container to %s",
+		srv.address(), srv.dir)
+}
+
+// TestGatewayEdi_Transport_KnownHostsMismatchIsRejected pins that a known_hosts
+// entry that does not match the server's key rejects the connection.
+func TestGatewayEdi_Transport_KnownHostsMismatchIsRejected(t *testing.T) {
+	srv := startSftpTestServer(t)
+	withHostKeyPolicy(t, srv.knownHostsFileWithDifferentKey(t), false)
+
+	g := &GatewayEdi{}
+	u := &model.UserModel{Username: "bob", Id: 2}
+	if err := g.SetContext(user.NewContext(context.Background(), u)); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.SetOptions(map[string]any{
+		"gatewayEdiHost":     srv.host,
+		"gatewayEdiPort":     srv.port,
+		"gatewayEdiUsername": testSftpUser,
+		"gatewayEdiPassword": testSftpPass,
+		"gatewayEdiPath":     srv.dir,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	err := g.Transport("payload.x12", []byte("ISA*00*"))
+	if err == nil {
+		t.Fatal("Transport() with a mismatched known_hosts entry returned a nil error; the connection must be rejected")
+	}
+	if !strings.Contains(err.Error(), "gatewayedi: ssh dial") {
+		t.Errorf("Transport() error = %q; want the rejected handshake surfaced on the dial", err.Error())
+	}
+	if _, statErr := os.Stat(filepath.Join(srv.dir, "payload.x12.zip")); statErr == nil {
+		t.Error("a file was uploaded over a rejected host key")
+	}
+}
+
+// TestGatewayEdi_Transport_InsecureOptInDialsRealServer covers the explicit
+// bypass: with sftp-insecure-ignore-hostkey set the plugin reaches a real
+// handshake and uploads.
+func TestGatewayEdi_Transport_InsecureOptInDialsRealServer(t *testing.T) {
+	srv := startSftpTestServer(t)
+	withHostKeyPolicy(t, "", true)
+
+	g := &GatewayEdi{}
+	u := &model.UserModel{Username: "bob", Id: 2}
+	if err := g.SetContext(user.NewContext(context.Background(), u)); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.SetOptions(map[string]any{
+		"gatewayEdiHost":     srv.host,
+		"gatewayEdiPort":     srv.port,
+		"gatewayEdiUsername": testSftpUser,
+		"gatewayEdiPassword": testSftpPass,
+		"gatewayEdiPath":     srv.dir,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := g.Transport("payload.x12", []byte("ISA*00*")); err != nil {
+		t.Fatalf("Transport() with the insecure opt-in error = %v; want the upload to complete", err)
+	}
+	if _, err := os.Stat(filepath.Join(srv.dir, "payload.x12.zip")); err != nil {
+		t.Errorf("the server did not receive the payload archive: %v", err)
+	}
+}
+
+// TestGatewayEdi_SetOptions_ReportsUncoercibleOptions pins the corrected
+// SetOptions contract: an option present with the wrong type is reported
+// instead of silently leaving the plugin unconfigured (the previous
+// implementation discarded the coercion error).
+func TestGatewayEdi_SetOptions_ReportsUncoercibleOptions(t *testing.T) {
+	tests := []struct {
+		name    string
+		options map[string]any
+		wantKey string
+	}{
+		{"string option given an int", map[string]any{"gatewayEdiHost": 127}, "gatewayEdiHost"},
+		{"string option given a bool", map[string]any{"gatewayEdiPassword": true}, "gatewayEdiPassword"},
+		{"int option given a string", map[string]any{"gatewayEdiPort": "22"}, "gatewayEdiPort"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := &GatewayEdi{}
+			err := g.SetOptions(tt.options)
+			if err == nil {
+				t.Fatalf("SetOptions(%#v) = nil; want the coercion error for %q", tt.options, tt.wantKey)
+			}
+			if !strings.Contains(err.Error(), tt.wantKey) || !strings.Contains(err.Error(), "unable to coerce value") {
+				t.Errorf("SetOptions(%#v) error = %q; want it to name %q and the failed coercion", tt.options, err.Error(), tt.wantKey)
+			}
+			if !strings.HasPrefix(err.Error(), "gatewayedi:") {
+				t.Errorf("SetOptions(%#v) error = %q; want it tagged with the gatewayedi plugin prefix", tt.options, err.Error())
+			}
+		})
+	}
 }
 
 func TestGatewayEdi_Contract_Surface(t *testing.T) {

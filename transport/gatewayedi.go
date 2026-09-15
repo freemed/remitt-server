@@ -66,11 +66,21 @@ func (g *GatewayEdi) Transport(filename string, data any) error {
 		return fmt.Errorf("gatewayedi: zip getdata: %w", err)
 	}
 
+	// Host key verification follows the configured policy
+	// (paths.known-hosts, or the explicit sftp-insecure-ignore-hostkey
+	// opt-in); with neither configured this fails closed here, before any
+	// connection is attempted. See common.HostKeyCallback.
+	hostKeyCallback, err := common.HostKeyCallback()
+	if err != nil {
+		return fmt.Errorf("gatewayedi: %w", err)
+	}
+
 	// SFTP upload
 	sshConfig := &ssh.ClientConfig{
-		User:    g.username,
-		Auth:    []ssh.AuthMethod{ssh.Password(g.password)},
-		Timeout: 10 * time.Second,
+		User:            g.username,
+		Auth:            []ssh.AuthMethod{ssh.Password(g.password)},
+		Timeout:         10 * time.Second,
+		HostKeyCallback: hostKeyCallback,
 	}
 
 	sshClient, err := ssh.Dial("tcp", fmt.Sprintf("%s:%d", g.host, g.port), sshConfig)
@@ -109,13 +119,32 @@ func (g *GatewayEdi) Options() []string {
 	return []string{"gatewayEdiHost", "gatewayEdiPort", "gatewayEdiUsername", "gatewayEdiPassword", "gatewayEdiPath"}
 }
 
-// SetOptions sets the current options for this plugin
+// SetOptions sets the current options for this plugin.
+//
+// An option that is present but carries the wrong type is reported: the
+// previous implementation discarded the coercion error, so a wrong-typed
+// option left the plugin silently unconfigured and only failed much later, in
+// Transport, with an error that never named the option at fault.
+//
+// An option that is simply absent is not an error - the field keeps its zero
+// value and Transport reports it as missing configuration.
 func (g *GatewayEdi) SetOptions(o map[string]any) error {
-	g.host, _ = g.coerceOptionString(o, "gatewayEdiHost")
-	g.port, _ = g.coerceOptionInt(o, "gatewayEdiPort")
-	g.username, _ = g.coerceOptionString(o, "gatewayEdiUsername")
-	g.password, _ = g.coerceOptionString(o, "gatewayEdiPassword")
-	g.path, _ = g.coerceOptionString(o, "gatewayEdiPath")
+	var err error
+	if g.host, err = g.stringOption(o, "gatewayEdiHost"); err != nil {
+		return err
+	}
+	if g.port, err = g.intOption(o, "gatewayEdiPort"); err != nil {
+		return err
+	}
+	if g.username, err = g.stringOption(o, "gatewayEdiUsername"); err != nil {
+		return err
+	}
+	if g.password, err = g.stringOption(o, "gatewayEdiPassword"); err != nil {
+		return err
+	}
+	if g.path, err = g.stringOption(o, "gatewayEdiPath"); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -125,26 +154,30 @@ func (g *GatewayEdi) SetContext(c context.Context) error {
 	return nil
 }
 
-func (g *GatewayEdi) coerceOptionString(o map[string]any, keyname string) (string, error) {
+// stringOption reads an optional string option. A missing key leaves the field
+// at its zero value; a present value of another type is a configuration error.
+func (g *GatewayEdi) stringOption(o map[string]any, keyname string) (string, error) {
 	x, ok := o[keyname]
 	if !ok {
-		return "", fmt.Errorf("unable to read option for '%s'", keyname)
+		return "", nil
 	}
 	y, ok := x.(string)
 	if !ok {
-		return "", fmt.Errorf("unable to coerce value for '%s'", keyname)
+		return "", fmt.Errorf("gatewayedi: unable to coerce value for '%s': got %T, want string", keyname, x)
 	}
 	return y, nil
 }
 
-func (g *GatewayEdi) coerceOptionInt(o map[string]any, keyname string) (int, error) {
+// intOption reads an optional int option, with the same missing/typed rules as
+// stringOption.
+func (g *GatewayEdi) intOption(o map[string]any, keyname string) (int, error) {
 	x, ok := o[keyname]
 	if !ok {
-		return 0, fmt.Errorf("unable to read option for '%s'", keyname)
+		return 0, nil
 	}
 	y, ok := x.(int)
 	if !ok {
-		return 0, fmt.Errorf("unable to coerce value for '%s'", keyname)
+		return 0, fmt.Errorf("gatewayedi: unable to coerce value for '%s': got %T, want int", keyname, x)
 	}
 	return y, nil
 }

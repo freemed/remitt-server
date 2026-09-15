@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/freemed/remitt-server/common"
 	"github.com/freemed/remitt-server/model"
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
@@ -208,16 +209,27 @@ func (s *SftpScooper) validateConfig() error {
 // openSession establishes the SFTP session Scoop reads from: the injected seam
 // when a test provided one, otherwise a real SSH/SFTP connection to the
 // configured host.
+//
+// Host key verification follows the configured policy: paths.known-hosts when
+// it is set, or the explicit sftp-insecure-ignore-hostkey opt-in. The previous
+// implementation hardcoded ssh.InsecureIgnoreHostKey(), which accepted any host
+// key without a word; with neither option configured this now fails closed
+// before dialling (see common.HostKeyCallback).
 func (s *SftpScooper) openSession() (sftpSession, error) {
 	if s.sessionOpener != nil {
 		return s.sessionOpener()
+	}
+
+	hostKeyCallback, err := common.HostKeyCallback()
+	if err != nil {
+		return nil, fmt.Errorf("sftpscooper: %w", err)
 	}
 
 	sshConfig := &ssh.ClientConfig{
 		User:            s.sftpUser,
 		Auth:            []ssh.AuthMethod{ssh.Password(s.sftpPass)},
 		Timeout:         10 * time.Second,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: hostKeyCallback,
 	}
 
 	sshClient, err := ssh.Dial("tcp", fmt.Sprintf("%s:%d", s.host, s.port), sshConfig)

@@ -25,6 +25,15 @@ type AppConfig struct {
 		DistPath         string `yaml:"dist"`
 		XsltProcPath     string `yaml:"xsltproc"`
 		TemporaryPath    string `yaml:"temp"`
+		// KnownHostsPath is the OpenSSH known_hosts file used to verify the
+		// host key of every SSH/SFTP endpoint the transports and scoopers
+		// connect to (see common.HostKeyCallback).
+		//
+		// There is deliberately NO default: an empty value means "not
+		// configured", and unless SftpInsecureIgnoreHostKey is also set the
+		// SSH code fails closed with an error naming both options rather
+		// than trusting an unknown host key.
+		KnownHostsPath string `yaml:"known-hosts"`
 	} `yaml:"paths"`
 	Mail struct {
 		Server      string `yaml:"server"`
@@ -35,7 +44,17 @@ type AppConfig struct {
 	TimingIterations struct {
 		NumWorkerThreads int `yaml:"worker-threads"`
 	} `yaml:"timing-iterations"`
-	InternalXslt bool `yaml:"internal-xslt"`
+	// SftpInsecureIgnoreHostKey is the explicit opt-in to skipping SSH host
+	// key verification for the SFTP transports and scoopers. It exists for
+	// first contact (capturing a host key into paths.known-hosts) and for
+	// tests; it is false by default, so an operator has to write it out
+	// deliberately, and while it is in effect every SSH/SFTP peer is trusted
+	// without any host key check (a loud warning is logged).
+	//
+	// When paths.known-hosts is ALSO configured the known_hosts file wins:
+	// this flag is a bypass of last resort, never an override.
+	SftpInsecureIgnoreHostKey bool `yaml:"sftp-insecure-ignore-hostkey"`
+	InternalXslt              bool `yaml:"internal-xslt"`
 }
 
 func (c *AppConfig) SetDefaults() {
@@ -53,6 +72,13 @@ func (c *AppConfig) SetDefaults() {
 	// instead; the binary is still shipped and is also used as a fallback if the
 	// in-process engine errors (see common.XslTransform).
 	c.InternalXslt = true
+
+	// Paths.KnownHostsPath and SftpInsecureIgnoreHostKey are deliberately left
+	// at their zero values: there is no default known_hosts file (a guessed
+	// path would either fail confusingly or, worse, verify against something
+	// the operator never chose) and host key verification is never silently
+	// disabled. With neither option configured the SSH code fails closed; see
+	// common.HostKeyCallback.
 }
 
 func LoadConfigWithDefaults(configPath string) (*AppConfig, error) {

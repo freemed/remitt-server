@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/freemed/remitt-server/common"
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 )
@@ -38,10 +39,20 @@ func (s *Sftp) Transport(filename string, data any) error {
 		return fmt.Errorf("sftp: no password or key given")
 	}
 
+	// Host key verification follows the configured policy
+	// (paths.known-hosts, or the explicit sftp-insecure-ignore-hostkey
+	// opt-in); with neither configured this fails closed here, before any
+	// connection is attempted. See common.HostKeyCallback.
+	hostKeyCallback, err := common.HostKeyCallback()
+	if err != nil {
+		return fmt.Errorf("sftp: %w", err)
+	}
+
 	sshConfig := &ssh.ClientConfig{
-		User:    s.username,
-		Auth:    []ssh.AuthMethod{}, // populate later
-		Timeout: time.Duration(10) * time.Second,
+		User:            s.username,
+		Auth:            []ssh.AuthMethod{}, // populate later
+		Timeout:         time.Duration(10) * time.Second,
+		HostKeyCallback: hostKeyCallback,
 	}
 	if s.password != "" || s.keydata != "" {
 		sshConfig.Auth = append(sshConfig.Auth, ssh.Password(s.password))
@@ -84,13 +95,32 @@ func (s *Sftp) Options() []string {
 	return []string{"sftpUsername", "sftpPassword", "sftpHost", "sftpPort", "sftpPath"}
 }
 
-// SetOptions sets the current options for this plugin
+// SetOptions sets the current options for this plugin.
+//
+// An option that is present but carries the wrong type is reported: the
+// previous implementation discarded the coercion error, so a wrong-typed
+// option left the plugin silently unconfigured and only failed much later, in
+// Transport, with an error that never named the option at fault.
+//
+// An option that is simply absent is not an error - the field keeps its zero
+// value and Transport reports it as missing configuration.
 func (s *Sftp) SetOptions(o map[string]any) error {
-	s.username, _ = s.coerceOptionString(o, "sftpUsername")
-	s.password, _ = s.coerceOptionString(o, "sftpPassword")
-	s.host, _ = s.coerceOptionString(o, "sftpHost")
-	s.port, _ = s.coerceOptionInt(o, "sftpPort")
-	s.path, _ = s.coerceOptionString(o, "sftpPath")
+	var err error
+	if s.username, err = s.stringOption(o, "sftpUsername"); err != nil {
+		return err
+	}
+	if s.password, err = s.stringOption(o, "sftpPassword"); err != nil {
+		return err
+	}
+	if s.host, err = s.stringOption(o, "sftpHost"); err != nil {
+		return err
+	}
+	if s.port, err = s.intOption(o, "sftpPort"); err != nil {
+		return err
+	}
+	if s.path, err = s.stringOption(o, "sftpPath"); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -101,26 +131,30 @@ func (s *Sftp) SetContext(c context.Context) error {
 	return nil
 }
 
-func (s *Sftp) coerceOptionString(o map[string]any, keyname string) (string, error) {
+// stringOption reads an optional string option. A missing key leaves the field
+// at its zero value; a present value of another type is a configuration error.
+func (s *Sftp) stringOption(o map[string]any, keyname string) (string, error) {
 	x, ok := o[keyname]
 	if !ok {
-		return "", fmt.Errorf("unable to read option for '%s'", keyname)
+		return "", nil
 	}
 	y, ok := x.(string)
 	if !ok {
-		return "", fmt.Errorf("unable to coerce value for '%s'", keyname)
+		return "", fmt.Errorf("sftp: unable to coerce value for '%s': got %T, want string", keyname, x)
 	}
 	return y, nil
 }
 
-func (s *Sftp) coerceOptionInt(o map[string]any, keyname string) (int, error) {
+// intOption reads an optional int option, with the same missing/typed rules as
+// stringOption.
+func (s *Sftp) intOption(o map[string]any, keyname string) (int, error) {
 	x, ok := o[keyname]
 	if !ok {
-		return 0, fmt.Errorf("unable to read option for '%s'", keyname)
+		return 0, nil
 	}
 	y, ok := x.(int)
 	if !ok {
-		return 0, fmt.Errorf("unable to coerce value for '%s'", keyname)
+		return 0, fmt.Errorf("sftp: unable to coerce value for '%s': got %T, want int", keyname, x)
 	}
 	return y, nil
 }
