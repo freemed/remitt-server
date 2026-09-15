@@ -56,6 +56,20 @@ func (a Api) UserList(c *echo.Context) error {
 	return c.JSON(http.StatusOK, o)
 }
 
+// optionalUserString maps an optional user field to the column representation the
+// API means: a value the caller actually supplied is stored, and an omitted or
+// empty one stays SQL NULL ("not configured") rather than becoming an empty
+// string. This has to be explicit because model.NewNullStringValue marks any
+// string valid, including the empty string, which would otherwise flip every
+// blank credential column from NULL to an empty value now that the constructor
+// behaves correctly.
+func optionalUserString(s string) model.NullString {
+	if s == "" {
+		return model.NullString{}
+	}
+	return model.NewNullStringValue(s)
+}
+
 func (a Api) UserAdd(c *echo.Context) error {
 	if err := a.aclRequireRole(c, "admin"); err != nil {
 		return err
@@ -81,11 +95,11 @@ func (a Api) UserAdd(c *echo.Context) error {
 		Username:               raw.Username,
 		PasswordHash:           raw.Password,
 		Role:                   raw.Role,
-		ContactEmail:           model.NewNullStringValue(raw.ContactEmail),
+		ContactEmail:           optionalUserString(raw.ContactEmail),
 		CallbackServiceUri:     raw.CallbackServiceUri,
 		CallbackServiceWsdlUri: raw.CallbackServiceWsdlUri,
-		CallbackUsername:       model.NewNullStringValue(raw.CallbackUsername),
-		CallbackPassword:       model.NewNullStringValue(raw.CallbackPassword),
+		CallbackUsername:       optionalUserString(raw.CallbackUsername),
+		CallbackPassword:       optionalUserString(raw.CallbackPassword),
 	}
 
 	id, err := model.AddUser(u)
