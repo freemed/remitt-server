@@ -1,5 +1,26 @@
 # REMITT pipeline wiring — plan (2026-09-15)
 
+## Owner decisions (2026-09-15, all four answered)
+
+1. **Execute this plan in order** — feeder, then translation resolution, then the
+   translator input contract — each verified against the live database and the SSH
+   harness, not against mocks.
+2. **Feeder trigger: BOTH.** Poll like the Java *and* enqueue immediately on
+   insert, with the poller skipping anything already in flight. Poll-only would
+   make every submission wait up to 500 ms and would still be the only thing that
+   picks up rows inserted by another path; enqueue-only would be blind to those
+   rows and to work left waiting across a restart.
+3. **Translation resolution: resolve in Go from the database's own mapping
+   tables** (do what `p_ResolveTranslationPlugin` does), with the Go
+   `InputFormat()` as a fallback when no row exists. The seeded formats are NOT to
+   be edited — the database is the fixed 0.5.x contract.
+4. **Promote the end-to-end driver** into the repo as an env-gated integration
+   test, so the render→translate→transport claim is reproducible by anyone with a
+   database. It is currently the only artifact that would tell us whether the
+   feeder works, so it is being held until the feeder lands and can then act as
+   the feeder's acceptance test (the same reasoning that had the SSH harness
+   promoted before it was lost).
+
 ## Why this exists
 
 Every part of the render → translate → transport chain was fixed and covered today,
