@@ -2,7 +2,6 @@ package translation
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/freemed/remitt-server/model"
@@ -29,11 +28,12 @@ func (t *TranslateX12Xml) Resolver(in string, out string) bool {
 }
 
 func (t *TranslateX12Xml) Translate(source any) (out []byte, err error) {
-	src, ok := source.(model.X12Xml)
-	if !ok {
-		out = []byte{}
-		err = errors.New("x12xml: translate: invalid datatype presented")
-		return
+	// The pipeline hands the render stage's bytes; the typed model is accepted
+	// too (both are what the Java plugin's single byte[] entry point covered -
+	// see input.go).
+	src, err := x12XmlFromInput(source)
+	if err != nil {
+		return []byte{}, err
 	}
 
 	t.Hl = map[string]int{}
@@ -146,4 +146,3 @@ func (t *TranslateX12Xml) leftZeroPad(text string, length int) string {
 	}
 	return x
 }
-

@@ -398,12 +398,25 @@ func executeJob(w *JobQueueItem) (err error) {
 	transportPlugin.SetContext(ctx)
 
 	// Resolve translation plugin
-	translationPluginName, err := translation.ResolveTranslator(w.RenderOption, transportPlugin.InputFormat())
+	//
+	// The database owns this decision (p_ResolveTranslationPlugin,
+	// migrations/001_legacy.up.sql:327-338): the render plugin and option give
+	// the format the render produces, the transport plugin and option give the
+	// formats it accepts, and tTranslation names the translator between them.
+	// ResolveTranslatorForJob does exactly that against the live tables and
+	// falls back to the Go registries' own format strings only when the
+	// database has no row for the pair. Resolving with the render OPTION and
+	// the Go transport's InputFormat() - which is what this line used to do -
+	// compares two vocabularies the database never stored, so no shipped
+	// stylesheet ever resolved ('4010_837p' vs 'x12').
+	translationPluginName, translationSource, err := translation.ResolveTranslatorForJob(
+		w.RenderPlugin, w.RenderOption, w.TransportPlugin, w.TransportOption, transportPlugin.InputFormat())
 	if err != nil {
 		w.Fail(err)
-		return fmt.Errorf("executejob: resol;vetranslator: %w", err)
+		return fmt.Errorf("executejob: resolve translator: %w", err)
 	}
-	log.Printf(tag+"Resolved plugin %s for %s -> %s", translationPluginName, w.RenderOption, transportPlugin.InputFormat())
+	log.Printf(tag+"Resolved plugin %s (%s) for render %s/%s -> transport %s/%s",
+		translationPluginName, translationSource, w.RenderPlugin, w.RenderOption, w.TransportPlugin, w.TransportOption)
 
 	// Instantiate translation plugin
 	translationPlugin, err := translation.InstantiateTranslator(translationPluginName)

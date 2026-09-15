@@ -1,0 +1,22 @@
+-- tTranslation is the translation-resolution table: p_ResolveTranslationPlugin
+-- (migrations/001_legacy.up.sql:327-338) selects the row whose inputFormat is
+-- the render plugin's declared output format and whose outputFormat the
+-- consuming transport accepts.
+--
+--   SELECT plugin FROM tTranslation WHERE
+--       inputFormat = renderPluginOutputFormat( renderPlugin, renderOption )
+--       AND FIND_IN_SET( outputFormat, transportPluginInputFormat( transportPlugin, transportOption ) )
+--       LIMIT 1;
+--
+-- This query keeps the first half of that predicate (the inputFormat equality,
+-- which MySQL resolves with the column's own collation) and returns EVERY
+-- candidate row for the format, ordered so the choice is deterministic. The
+-- second half - FIND_IN_SET, i.e. "is this row's outputFormat one of the
+-- formats the transport accepts" - is applied by translation.FormatInSet, a
+-- reimplementation of MySQL's FIND_IN_SET, so the rule can be unit-tested with
+-- no database. The Java's LIMIT 1 had no ORDER BY, so which of several
+-- matching rows it returned was up to the storage engine; ordering by plugin
+-- makes the answer stable.
+
+-- name: GetTranslationsByInputFormat :many
+SELECT plugin, inputformat, outputformat FROM tTranslation WHERE inputformat = sqlc.arg(inputformat) ORDER BY plugin;

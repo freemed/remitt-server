@@ -43,9 +43,9 @@ func (t *TranslateFixedFormPDF) Translate(source any) ([]byte, error) {
 		log.Printf("Translate()")
 	}
 
-	src, ok := source.(model.FixedFormXml)
-	if !ok {
-		return []byte{}, fmt.Errorf("fixedformpdf: translate: invalid datatype presented")
+	src, inputErr := fixedFormXmlFromInput(source, fixedFormPdfPlugin)
+	if inputErr != nil {
+		return []byte{}, inputErr
 	}
 
 	if t.Benchmark {

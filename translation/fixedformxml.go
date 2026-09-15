@@ -32,9 +32,9 @@ func (t *TranslateFixedFormXML) Translate(source any) (out []byte, err error) {
 		log.Printf("Translate()")
 	}
 
-	src, ok := source.(model.FixedFormXml)
-	if !ok {
-		return []byte{}, fmt.Errorf("fixedformxml: translate: render: invalid datatype presented")
+	src, err := fixedFormXmlFromInput(source, fixedFormXmlPlugin)
+	if err != nil {
+		return []byte{}, err
 	}
 
 	ob := &bytes.Buffer{}

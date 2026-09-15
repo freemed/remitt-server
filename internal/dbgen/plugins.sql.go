@@ -2,12 +2,73 @@
 // versions:
 //   sqlc v1.31.1
 // source: plugins.sql
+//
+// HAND-EDITED 2026-09-15: GetPluginByPluginName and
+// GetPluginOptionByPluginAndPoption were added to internal/db/queries/plugins.sql
+// and written out here by hand, in the shape sqlc v1.31.1 emits for a :one
+// query over these tables (SELECT * expanded to the column list, params bound
+// positionally, sql.ErrNoRows returned for a missing row). sqlc is not
+// installed in this environment, so this file is what a `sqlc generate` run
+// must reproduce. Nothing else in the file was touched.
 
 package dbgen
 
 import (
 	"context"
 )
+
+const getPluginByPluginName = `-- name: GetPluginByPluginName :one
+SELECT plugin, version, author, category, inputformat, outputformat FROM tPlugins WHERE plugin = ?
+`
+
+// GetPluginByPluginName returns the tPlugins row for one plugin class. A class
+// the table does not store comes back as sql.ErrNoRows, which is the NULL the
+// stored function renderPluginOutputFormat / transportPluginInputFormat
+// would have returned (migrations/001_legacy.up.sql:276-291).
+func (q *Queries) GetPluginByPluginName(ctx context.Context, plugin string) (Tplugin, error) {
+	row := q.db.QueryRowContext(ctx, getPluginByPluginName, plugin)
+	var i Tplugin
+	err := row.Scan(
+		&i.Plugin,
+		&i.Version,
+		&i.Author,
+		&i.Category,
+		&i.Inputformat,
+		&i.Outputformat,
+	)
+	return i, err
+}
+
+const getPluginOptionByPluginAndPoption = `-- name: GetPluginOptionByPluginAndPoption :one
+SELECT poption, plugin, fullname, version, author, category, inputformat, outputformat FROM tPluginOptions WHERE plugin = ? AND poption = ?
+`
+
+// GetPluginOptionByPluginAndPoptionParams is the argument struct sqlc emits for
+// the two bound parameters of GetPluginOptionByPluginAndPoption.
+type GetPluginOptionByPluginAndPoptionParams struct {
+	Plugin  string `json:"plugin"`
+	Poption string `json:"poption"`
+}
+
+// GetPluginOptionByPluginAndPoption returns the tPluginOptions row for one
+// (plugin, poption) pair - the row that carries the per-option format of a
+// plugin whose own tPlugins format is the 'various' sentinel. No such row is
+// sql.ErrNoRows, i.e. the NULL the stored functions return.
+func (q *Queries) GetPluginOptionByPluginAndPoption(ctx context.Context, arg GetPluginOptionByPluginAndPoptionParams) (Tpluginoption, error) {
+	row := q.db.QueryRowContext(ctx, getPluginOptionByPluginAndPoption, arg.Plugin, arg.Poption)
+	var i Tpluginoption
+	err := row.Scan(
+		&i.Poption,
+		&i.Plugin,
+		&i.Fullname,
+		&i.Version,
+		&i.Author,
+		&i.Category,
+		&i.Inputformat,
+		&i.Outputformat,
+	)
+	return i, err
+}
 
 const getPluginOptions = `-- name: GetPluginOptions :many
 SELECT poption, plugin, fullname, version, author, category, inputformat, outputformat FROM tPluginOptions WHERE plugin = ?
