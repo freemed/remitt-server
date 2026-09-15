@@ -13,6 +13,10 @@ import (
 
 func init() {
 	RegisterTransporter("gatewayedi", func() Transporter { return &GatewayEdi{} })
+	// Legacy database and UI store the Java class name
+	// (migrations/001_legacy.up.sql); jobqueue passes that value straight
+	// through, so the alias must resolve too.
+	registerJavaTransporter("GatewayEdiTransport", func() Transporter { return &GatewayEdi{} })
 }
 
 // GatewayEdi represents a transport which wraps payloads in a ZIP

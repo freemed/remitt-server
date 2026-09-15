@@ -122,27 +122,41 @@ func TestStoreFilePdf_Transport_SurfacesDatabaseError(t *testing.T) {
 	}
 }
 
-// TestStoreFilePdf_Transport_NilQueriesPanics documents CURRENT behaviour:
-// like storefile, the plugin dereferences model.Queries unconditionally, so an
-// uninitialised database panics inside the job worker.
-func TestStoreFilePdf_Transport_NilQueriesPanics(t *testing.T) {
+// TestStoreFilePdf_Transport_NilQueriesReturnsError pins that storefilepdf
+// behaves like storefile: an uninitialised database fails the job with an error
+// instead of panicking the worker.
+//
+// (Replaces TestStoreFilePdf_Transport_NilQueriesPanics, which pinned the
+// panic.)
+func TestStoreFilePdf_Transport_NilQueriesReturnsError(t *testing.T) {
 	prevQueries := model.Queries
 	model.Queries = nil
 	t.Cleanup(func() { model.Queries = prevQueries })
 
-	s := &StoreFilePdf{}
-	if err := s.SetContext(ctxWithUser("alice")); err != nil {
-		t.Fatal(err)
+	tests := []struct {
+		name    string
+		payload any
+	}{
+		{"string payload", "%PDF-1.7"},
+		{"byte payload", []byte("%PDF-1.7")},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &StoreFilePdf{}
+			if err := s.SetContext(ctxWithUser("alice")); err != nil {
+				t.Fatal(err)
+			}
 
-	defer func() {
-		caught := recover()
-		if caught == nil {
-			t.Fatalf("Transport() with model.Queries == nil did NOT panic; current behaviour changed (storefilepdf.go:48 dereferences model.Queries)")
-		}
-		t.Logf("pinned behaviour: model.Queries == nil panics with %v (storefilepdf.go:48)", caught)
-	}()
-	_ = s.Transport("out.pdf", "%PDF-1.7")
+			// A panic here fails the test: the plugin must return, not unwind.
+			err := s.Transport("out.pdf", tt.payload)
+			if err == nil {
+				t.Fatal("Transport() with model.Queries == nil returned a nil error; want a database error")
+			}
+			if !strings.Contains(err.Error(), "database is not initialised") {
+				t.Errorf("Transport() = %q; want it to report that the database is not initialised", err.Error())
+			}
+		})
+	}
 }
 
 func TestStoreFilePdf_Contract_Surface(t *testing.T) {

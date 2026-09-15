@@ -13,6 +13,10 @@ import (
 
 func init() {
 	RegisterTransporter("storefile", func() Transporter { return &StoreFile{} })
+	// The Java class is org.remitt.plugin.transport.StoreFile (there is no
+	// ".StoreFileTransport"), see migrations/001_legacy.up.sql:226 and
+	// ../remitt/src/main/java/org/remitt/plugin/transport/StoreFile.java.
+	registerJavaTransporter("StoreFile", func() Transporter { return &StoreFile{} })
 }
 
 type StoreFile struct {
@@ -33,6 +37,13 @@ func (s *StoreFile) Transport(filename string, data any) error {
 		payload = d
 	default:
 		return fmt.Errorf("storefile: invalid data type %T", data)
+	}
+
+	// A process whose database was never initialised (or whose connection
+	// failed) must fail the job, not panic the worker. The guard sits directly
+	// on the use of the package-level model.Queries below.
+	if model.Queries == nil {
+		return fmt.Errorf("storefile: database is not initialised")
 	}
 
 	params := dbgen.InsertFileStoreParams{

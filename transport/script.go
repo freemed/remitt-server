@@ -17,6 +17,10 @@ var errHalt = errors.New("timed out")
 
 func init() {
 	RegisterTransporter("script", func() Transporter { return &Script{} })
+	// The legacy database and UI refer to this plugin by its Java class name,
+	// ScriptedHttpTransport (migrations/001_legacy.up.sql); jobqueue passes
+	// that value straight through, so the alias must resolve too.
+	registerJavaTransporter("ScriptedHttpTransport", func() Transporter { return &Script{} })
 }
 
 // Interpreter is a wrapper around the Otto JS interpreter, with

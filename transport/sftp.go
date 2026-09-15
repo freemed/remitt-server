@@ -11,6 +11,10 @@ import (
 
 func init() {
 	RegisterTransporter("sftp", func() Transporter { return &Sftp{} })
+	// Legacy database and UI store the Java class name
+	// (migrations/001_legacy.up.sql); jobqueue passes that value straight
+	// through, so the alias must resolve too.
+	registerJavaTransporter("SftpTransport", func() Transporter { return &Sftp{} })
 }
 
 // Sftp represents a transport which

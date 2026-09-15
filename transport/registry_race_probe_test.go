@@ -4,18 +4,21 @@ package transport
 
 // registry_race_probe_test.go is a TAG-GATED probe (build tag
 // "transport_race_probe"), deliberately excluded from the default test suite:
-// it demonstrates a fatal data race in the registry and therefore cannot live
-// in the always-on suite.
+// it hammers the registry from a writer goroutine and a reader loop, which is
+// only meaningful under -race.
 //
 // Run it explicitly:
 //
 //	go test -tags transport_race_probe -race -run TestRegistryRace -v .
 //
-// Expected result today (map.go:21-27 reads the registry without taking
-// transporterRegistryLock while RegisterTransporter writes it under the lock):
-// either "fatal error: concurrent map read and map write" (no -race) or a
-// "WARNING: DATA RACE" report (-race). The map_test.go suite pins the registry's
-// FUNCTIONAL contract; this probe pins the concurrency defect.
+// The probe was written to demonstrate the defect that InstantiateTransporter
+// read the registry without taking transporterRegistryLock while
+// RegisterTransporter wrote it under the lock ("fatal error: concurrent map
+// read and map write", or a "WARNING: DATA RACE" report). That is fixed -
+// both sides now take the lock - so the probe is expected to pass cleanly
+// under -race; a failure means the lock was lost again. The map_test.go suite
+// pins the registry's FUNCTIONAL contract; this probe pins the concurrency
+// contract.
 
 import (
 	"sync"
@@ -55,7 +58,7 @@ func TestRegistryRaceConcurrentRegisterAndInstantiate(t *testing.T) {
 		}
 	}()
 
-	// Readers: InstantiateTransporter does NOT hold the lock (map.go:21-27).
+	// Readers: InstantiateTransporter takes the lock for the registry lookup.
 	for i := 0; i < 200000; i++ {
 		if _, err := InstantiateTransporter(name); err != nil {
 			t.Fatalf("InstantiateTransporter(%q) = %v", name, err)

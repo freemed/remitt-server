@@ -4,9 +4,12 @@ package transport
 // interface contract (interface.go).
 //
 // What this file pins:
-//   - the exact set of names registered by the six transport plugins
+//   - the exact set of names registered by the six transport plugins: each
+//     plugin registers its short name AND the Java FQCN the legacy database
+//     stores (e.g. "sftp" and
+//     "org.remitt.plugin.transport.SftpTransport")
 //   - every registered name resolves to a non-nil Transporter of the expected
-//     concrete type (registry keys are SHORT names, e.g. "sftp")
+//     concrete type (registry keys are SHORT names plus FQCN aliases)
 //   - an unknown name fails with an error AND a nil plugin (never a nil
 //     plugin with a nil error)
 //   - every plugin implements Transporter, has a stable InputFormat, a
@@ -16,9 +19,10 @@ package transport
 //
 // RegisterTransporter/InstantiateTransporter carry the Java plugin name in
 // migrations/001_legacy.up.sql as an FQCN
-// (e.g. "org.remitt.plugin.transport.SftpTransport"); the registry does NOT
-// contain those names, which is pinned by
-// TestRegistry_JavaFQCNNamesDoNotResolve (see bugs_found in the task report).
+// (e.g. "org.remitt.plugin.transport.SftpTransport"); jobqueue passes the
+// stored value straight to InstantiateTransporter, so the registry contains
+// both the short names and those FQCNs, which
+// TestRegistry_JavaFQCNNamesResolveToTheSamePlugins pins.
 
 import (
 	"context"
@@ -55,9 +59,17 @@ func registeredNames() []string {
 }
 
 func TestRegistry_ContainsExactlyTheExpectedPluginNames(t *testing.T) {
+	// Six short names plus the six Java FQCN aliases the legacy database and
+	// the UI store (migrations/001_legacy.up.sql:222-227).
 	want := []string{
 		"claimlogic",
 		"gatewayedi",
+		"org.remitt.plugin.transport.ClaimLogicTransport",
+		"org.remitt.plugin.transport.GatewayEdiTransport",
+		"org.remitt.plugin.transport.ScriptedHttpTransport",
+		"org.remitt.plugin.transport.SftpTransport",
+		"org.remitt.plugin.transport.StoreFile",
+		"org.remitt.plugin.transport.StoreFilePdf",
 		"script",
 		"sftp",
 		"storefile",
@@ -129,31 +141,84 @@ func TestRegistry_UnknownNameReturnsErrorAndNilPlugin(t *testing.T) {
 	}
 }
 
-// TestRegistry_JavaFQCNNamesDoNotResolve documents CURRENT behaviour: the
-// names stored in the legacy seed (migrations/001_legacy.up.sql) and in the
-// UI harness (ui/testHarness.html) are Java FQCNs, but the registry only holds
-// short names, so a payload configured with the seeded value cannot be
-// executed by jobqueue (jobqueue.go passes w.TransportPlugin straight to
-// InstantiateTransporter). Bug: the FQCN never resolves.
-func TestRegistry_JavaFQCNNamesDoNotResolve(t *testing.T) {
-	fqcns := []string{
-		"org.remitt.plugin.transport.SftpTransport",
-		"org.remitt.plugin.transport.ScriptedHttpTransport",
-		"org.remitt.plugin.transport.ClaimLogicTransport",
-		"org.remitt.plugin.transport.GatewayEdiTransport",
-		"org.remitt.plugin.transport.StoreFile",
-		"org.remitt.plugin.transport.StoreFilePdf",
+// TestRegistry_JavaFQCNNamesResolveToTheSamePlugins asserts the names stored in
+// the legacy seed (migrations/001_legacy.up.sql:222-227) and in the UI harness
+// (ui/testHarness.html) resolve: jobqueue passes w.TransportPlugin straight to
+// InstantiateTransporter, so a payload configured with the seeded Java class
+// name must instantiate its plugin. The FQCN aliases are the real Java class
+// names verified against migrations/001_legacy.up.sql and
+// ../remitt/src/main/java/org/remitt/plugin/transport/ - note the two
+// storefile plugins are StoreFile / StoreFilePdf, NOT StoreFileTransport /
+// StoreFilePdfTransport.
+//
+// (This test replaces TestRegistry_JavaFQCNNamesDoNotResolve, which pinned the
+// pre-fix behaviour: the FQCNs never resolved.)
+func TestRegistry_JavaFQCNNamesResolveToTheSamePlugins(t *testing.T) {
+	tests := []struct {
+		fqcn  string
+		short string
+		check func(Transporter) bool
+		label string
+	}{
+		{"org.remitt.plugin.transport.SftpTransport", "sftp", func(m Transporter) bool { _, ok := m.(*Sftp); return ok }, "*Sftp"},
+		{"org.remitt.plugin.transport.ScriptedHttpTransport", "script", func(m Transporter) bool { _, ok := m.(*Script); return ok }, "*Script"},
+		{"org.remitt.plugin.transport.ClaimLogicTransport", "claimlogic", func(m Transporter) bool { _, ok := m.(*ClaimLogic); return ok }, "*ClaimLogic"},
+		{"org.remitt.plugin.transport.GatewayEdiTransport", "gatewayedi", func(m Transporter) bool { _, ok := m.(*GatewayEdi); return ok }, "*GatewayEdi"},
+		{"org.remitt.plugin.transport.StoreFile", "storefile", func(m Transporter) bool { _, ok := m.(*StoreFile); return ok }, "*StoreFile"},
+		{"org.remitt.plugin.transport.StoreFilePdf", "storefilepdf", func(m Transporter) bool { _, ok := m.(*StoreFilePdf); return ok }, "*StoreFilePdf"},
 	}
-	for _, fqcn := range fqcns {
-		t.Run(fqcn, func(t *testing.T) {
-			m, err := InstantiateTransporter(fqcn)
-			if err == nil {
-				t.Fatalf("InstantiateTransporter(%q) resolved to %T; registry keys are %v - if this test fails the FQCN gap was fixed and the test should be updated", fqcn, m, registeredNames())
+	for _, tt := range tests {
+		t.Run(tt.fqcn, func(t *testing.T) {
+			m, err := InstantiateTransporter(tt.fqcn)
+			if err != nil {
+				t.Fatalf("InstantiateTransporter(%q) = %v; the seeded legacy name must resolve to the plugin registered as %q", tt.fqcn, err, tt.short)
 			}
-			if m != nil {
-				t.Fatalf("InstantiateTransporter(%q) = %T with err %v; want a nil plugin", fqcn, m, err)
+			if m == nil {
+				t.Fatalf("InstantiateTransporter(%q) returned a nil plugin with a nil error", tt.fqcn)
+			}
+			if !tt.check(m) {
+				t.Fatalf("InstantiateTransporter(%q) = %T; want %s", tt.fqcn, m, tt.label)
+			}
+			// The alias must behave exactly like the short name: same concrete
+			// type, fresh instance per call.
+			short, err := InstantiateTransporter(tt.short)
+			if err != nil {
+				t.Fatalf("InstantiateTransporter(%q) = %v; want a plugin", tt.short, err)
+			}
+			if !tt.check(short) {
+				t.Fatalf("InstantiateTransporter(%q) = %T; want %s (the alias and the short name must agree)", tt.short, short, tt.label)
+			}
+			again, err := InstantiateTransporter(tt.fqcn)
+			if err != nil {
+				t.Fatalf("InstantiateTransporter(%q) on the second call = %v; want a plugin", tt.fqcn, err)
+			}
+			if again == m {
+				t.Errorf("InstantiateTransporter(%q) returned the same instance twice (%p); each call must build a new plugin", tt.fqcn, m)
 			}
 		})
+	}
+
+	// The aliases are registry keys in their own right, not a fallback path.
+	registered := make(map[string]bool, len(registeredNames()))
+	for _, n := range registeredNames() {
+		registered[n] = true
+	}
+	for _, tt := range tests {
+		if !registered[tt.fqcn] {
+			t.Errorf("%q is not a registry key; registered names are %v", tt.fqcn, registeredNames())
+		}
+	}
+
+	// An unknown class in the same namespace is still an error, not a panic
+	// and not a nil plugin with a nil error.
+	for _, fqcn := range []string{JavaPluginPrefix + "NoSuchTransport", JavaPluginPrefix, ""} {
+		m, err := InstantiateTransporter(fqcn)
+		if err == nil {
+			t.Fatalf("InstantiateTransporter(%q) returned a nil error; unknown names must fail", fqcn)
+		}
+		if m != nil {
+			t.Fatalf("InstantiateTransporter(%q) = %T with err %v; want a nil plugin", fqcn, m, err)
+		}
 	}
 }
 

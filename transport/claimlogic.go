@@ -13,6 +13,10 @@ import (
 
 func init() {
 	RegisterTransporter("claimlogic", func() Transporter { return &ClaimLogic{} })
+	// Legacy database and UI store the Java class name
+	// (migrations/001_legacy.up.sql); jobqueue passes that value straight
+	// through, so the alias must resolve too.
+	registerJavaTransporter("ClaimLogicTransport", func() Transporter { return &ClaimLogic{} })
 }
 
 type ClaimLogic struct {

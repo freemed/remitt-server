@@ -9,13 +9,14 @@ package transport
 // malformed URL. All requests go to net/http/httptest servers - no external
 // endpoint is contacted.
 //
-// Behaviour pinned as buggy (not fixed, production code is untouched):
-//   - a non-2xx response is returned as if it were a successful body: the
-//     status code is never inspected and no error is signalled to the script
-//   - a connection failure is indistinguishable from an empty body ("")
-//   - a URL that net/http refuses to parse panics inside Get/GetWithBasicAuth
-//     (the *http.Request error is discarded, then request.Header is dereferenced)
-//   - response bodies are never closed
+// Contract pinned here (script_http.go):
+//   - a 2xx response returns the response body verbatim, even when it is empty
+//   - anything else (non-2xx status, unreachable server, unparsable URL,
+//     unreadable body) is returned as an "httpFailurePrefix" ("HTTP-ERROR: ")
+//     string, so a rejection and a dead endpoint are never mistaken for the
+//     payload and an empty body stays distinguishable from a failure
+//   - every request carries the configured http.Client.Timeout (HTTPTimeout)
+//   - response bodies are always closed
 
 import (
 	"encoding/base64"
@@ -182,11 +183,15 @@ func TestScriptHTTP_HelpersAreExposedUnderGoCasedNames(t *testing.T) {
 	t.Log("pinned behaviour: a script must call http.Get/http.GetWithBasicAuth (otto uses the Go method names verbatim); \"http.get\" is undefined (script_http.go:16,32)")
 }
 
-// TestScriptHTTP_Non2xxIsReturnedAsASuccess documents CURRENT behaviour: a 500
-// (or 404) response body is handed to the script as the return value of
-// http.get() with no error and no status information, so a plugin script cannot
-// tell a successful submission from a rejection.
-func TestScriptHTTP_Non2xxIsReturnedAsASuccess(t *testing.T) {
+// TestScriptHTTP_Non2xxIsSurfacedAsAFailure pins that a rejection is reported
+// to the script as a failure instead of being returned as if it were the
+// payload: the body of a 404/500/403 is never handed over, and the failure
+// string names the status.
+//
+// (Replaces TestScriptHTTP_Non2xxIsReturnedAsASuccess, which pinned the pre-fix
+// behaviour: the error page body came back as a normal string with no error
+// signal - script_http.go never inspected the status code.)
+func TestScriptHTTP_Non2xxIsSurfacedAsAFailure(t *testing.T) {
 	for _, status := range []int{http.StatusNotFound, http.StatusInternalServerError, http.StatusForbidden} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			srv, _ := newHTTPTestServer(t, status, "error-page-body")
@@ -196,18 +201,36 @@ func TestScriptHTTP_Non2xxIsReturnedAsASuccess(t *testing.T) {
 			if err != nil {
 				t.Fatalf("running http.Get from JS: %v", err)
 			}
-			if got != "error-page-body" {
-				t.Fatalf("http.Get() = %q; want the error page body %q (current behaviour: status is never inspected)", got, "error-page-body")
+			if got == "error-page-body" {
+				t.Fatalf("http.Get() returned the HTTP %d error page body to the script as a success", status)
 			}
-			t.Logf("pinned behaviour: HTTP %d returned to the script as a normal string with no error signal (script_http.go:16-30)", status)
+			if !strings.HasPrefix(got, httpFailurePrefix) {
+				t.Fatalf("http.Get() = %q; want a failure string starting with %q", got, httpFailurePrefix)
+			}
+			if !strings.Contains(got, strconv.Itoa(status)) || !strings.Contains(got, http.StatusText(status)) {
+				t.Errorf("http.Get() = %q; want it to name HTTP %d %s", got, status, http.StatusText(status))
+			}
+
+			// Same contract for the authenticated helper.
+			got, err = evalJS(t, ic, `result = http.GetWithBasicAuth("`+srv.URL+`/secure", "alice", "s3cr3t");`, "result")
+			if err != nil {
+				t.Fatalf("running http.GetWithBasicAuth from JS: %v", err)
+			}
+			if !strings.HasPrefix(got, httpFailurePrefix) || strings.Contains(got, "error-page-body") {
+				t.Fatalf("http.GetWithBasicAuth() = %q; want a failure string naming HTTP %d with no response body", got, status)
+			}
 		})
 	}
 }
 
-// TestScriptHTTP_Get_ConnectionFailureReturnsEmptyString documents CURRENT
-// behaviour: an unreachable server and an empty response body are
-// indistinguishable - both give the script "".
-func TestScriptHTTP_Get_ConnectionFailureReturnsEmptyString(t *testing.T) {
+// TestScriptHTTP_Get_ConnectionFailureIsDistinguishableFromAnEmptyBody pins
+// that an unreachable server is NOT conflated with a successful response that
+// carried no body: the failure returns a "HTTP-ERROR: " string, while a 2xx
+// with an empty body returns "".
+//
+// (Replaces TestScriptHTTP_Get_ConnectionFailureReturnsEmptyString, which pinned
+// the pre-fix behaviour: both cases returned "".)
+func TestScriptHTTP_Get_ConnectionFailureIsDistinguishableFromAnEmptyBody(t *testing.T) {
 	// A loopback port with nothing listening gives a connect failure.
 	url := "http://127.0.0.1:" + strconv.Itoa(closedLocalPort(t)) + "/unreachable"
 	ic := testInterpreter()
@@ -216,26 +239,41 @@ func TestScriptHTTP_Get_ConnectionFailureReturnsEmptyString(t *testing.T) {
 	if err != nil {
 		t.Fatalf("running http.Get from JS against an unreachable server: %v", err)
 	}
-	if got != "" {
-		t.Fatalf("http.Get() = %q; want \"\" (current behaviour: a connection failure returns an empty string)", got)
+	if got == "" {
+		t.Fatal("http.Get() = \"\" for an unreachable server; a connection failure must not look like an empty body")
+	}
+	if !strings.HasPrefix(got, httpFailurePrefix) {
+		t.Fatalf("http.Get() = %q; want a failure string starting with %q", got, httpFailurePrefix)
 	}
 
 	got, err = evalJS(t, ic, `result = http.GetWithBasicAuth("`+url+`", "a", "b");`, "result")
 	if err != nil {
 		t.Fatalf("running http.GetWithBasicAuth from JS against an unreachable server: %v", err)
 	}
-	if got != "" {
-		t.Fatalf("http.getWithBasicAuth() = %q; want \"\"", got)
+	if !strings.HasPrefix(got, httpFailurePrefix) {
+		t.Fatalf("http.GetWithBasicAuth() = %q; want a failure string starting with %q", got, httpFailurePrefix)
 	}
-	t.Log("pinned behaviour: connection failures are swallowed and returned as \"\" (script_http.go:24-27, 41-44)")
+
+	// The contrast that makes the two distinguishable: a 2xx response with an
+	// empty body is a success, and returns "".
+	empty, _ := newHTTPTestServer(t, http.StatusOK, "")
+	got, err = evalJS(t, ic, `result = http.Get("`+empty.URL+`/");`, "result")
+	if err != nil {
+		t.Fatalf("running http.Get from JS against an empty 2xx body: %v", err)
+	}
+	if got != "" {
+		t.Fatalf("http.Get() = %q for a 2xx response with an empty body; want \"\"", got)
+	}
 }
 
-// TestScriptHTTP_MalformedURLPanics documents CURRENT behaviour: http.NewRequest
-// returns a nil request for an unparsable URL, the error is discarded, and the
-// following request.Header.Set panics - inside a Script transport that panic
-// escapes otto's VM and takes the job worker down (script.go:RunUnsafe
-// re-panics anything that is not its own errHalt sentinel).
-func TestScriptHTTP_MalformedURLPanics(t *testing.T) {
+// TestScriptHTTP_MalformedURLReturnsAFailure pins that a URL net/http refuses
+// to parse is reported to the script instead of panicking: the discarded
+// http.NewRequest error used to make the helpers dereference a nil request, and
+// that panic escaped otto's VM (script.go:RunUnsafe re-panics anything that is
+// not its own errHalt sentinel) and took the job worker down.
+//
+// (Replaces TestScriptHTTP_MalformedURLPanics, which pinned the panic.)
+func TestScriptHTTP_MalformedURLReturnsAFailure(t *testing.T) {
 	ic := testInterpreter()
 	hc := &httpclient{obj: ic}
 
@@ -248,15 +286,32 @@ func TestScriptHTTP_MalformedURLPanics(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			defer func() {
-				caught := recover()
-				if caught == nil {
-					t.Fatalf("Get(%q) did not panic; current behaviour changed (script_http.go:21-22 discards the NewRequest error)", tt.url)
-				}
-				t.Logf("pinned behaviour: Get(%q) panics with %v (script_http.go:21-22)", tt.url, caught)
-			}()
-			_ = hc.Get(tt.url)
+			// A panic here fails the test: the helper must return, not unwind.
+			got := hc.Get(tt.url)
+			if got == "" {
+				t.Fatalf("Get(%q) = \"\"; want a failure string", tt.url)
+			}
+			if !strings.HasPrefix(got, httpFailurePrefix) {
+				t.Fatalf("Get(%q) = %q; want a failure string starting with %q", tt.url, got, httpFailurePrefix)
+			}
+			if !strings.Contains(got, "invalid URL") {
+				t.Errorf("Get(%q) = %q; want it to report the invalid URL", tt.url, got)
+			}
+
+			auth := hc.GetWithBasicAuth(tt.url, "a", "b")
+			if !strings.HasPrefix(auth, httpFailurePrefix) {
+				t.Fatalf("GetWithBasicAuth(%q) = %q; want a failure string starting with %q", tt.url, auth, httpFailurePrefix)
+			}
 		})
+	}
+
+	// The JS path must survive the same input.
+	got, err := evalJS(t, ic, `result = http.Get("http://example.invalid:named-port/");`, "result")
+	if err != nil {
+		t.Fatalf("running http.Get from JS with an unparsable port: %v", err)
+	}
+	if !strings.HasPrefix(got, httpFailurePrefix) {
+		t.Fatalf("http.Get() = %q; want a failure string starting with %q", got, httpFailurePrefix)
 	}
 }
 
@@ -293,27 +348,96 @@ func TestScriptHTTP_GoQueryIsUnreachableFromJS(t *testing.T) {
 	t.Logf("pinned behaviour: http.GoQuery is not callable from JS: %v", err)
 }
 
-// TestScriptHTTP_NoClientTimeout documents CURRENT behaviour: the http.Client
-// used by both helpers has no Timeout (the configured HTTPTimeout is commented
-// out), so a hung payer endpoint blocks the job worker indefinitely.
-func TestScriptHTTP_NoClientTimeoutIsPinned(t *testing.T) {
-	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(200 * time.Millisecond)
-		_, _ = w.Write([]byte("late"))
-	}))
-	defer slow.Close()
+// TestScriptHTTP_ClientTimeoutIsApplied pins that both helpers bound their
+// requests with the configured HTTPTimeout: a response slower than the
+// configured bound is abandoned instead of holding the job worker forever,
+// while a response inside the bound is still waited out and returned. A
+// non-positive configuration falls back to the default rather than silently
+// disabling the bound.
+//
+// (Replaces TestScriptHTTP_NoClientTimeoutIsPinned, which pinned the pre-fix
+// behaviour: neither helper set http.Client.Timeout - the configured
+// HTTPTimeout was commented out - so a hung payer endpoint blocked a worker
+// indefinitely.)
+func TestScriptHTTP_ClientTimeoutIsApplied(t *testing.T) {
+	prev := HTTPTimeout
+	t.Cleanup(func() { HTTPTimeout = prev })
 
-	ic := testInterpreter()
-	hc := &httpclient{obj: ic}
+	// The client both helpers build carries the configured timeout, and a
+	// non-positive configuration falls back to the default.
+	t.Run("client carries the configured timeout", func(t *testing.T) {
+		tests := []struct {
+			name       string
+			configured time.Duration
+			want       time.Duration
+		}{
+			{"configured value", 250 * time.Millisecond, 250 * time.Millisecond},
+			{"unset falls back to the default", 0, defaultHTTPTimeout},
+			{"negative falls back to the default", -time.Second, defaultHTTPTimeout},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				HTTPTimeout = tt.configured
+				if got := newHTTPClient().Timeout; got != tt.want {
+					t.Errorf("newHTTPClient().Timeout = %v with HTTPTimeout = %v; want %v", got, tt.configured, tt.want)
+				}
+			})
+		}
+	})
 
-	start := time.Now()
-	if got := hc.Get(slow.URL); got != "late" {
-		t.Fatalf("Get() = %q; want %q", got, "late")
-	}
-	if elapsed := time.Since(start); elapsed < 150*time.Millisecond {
-		t.Fatalf("Get() returned after %v; want it to have waited for the slow response", elapsed)
-	}
-	t.Log("pinned behaviour: neither helper sets http.Client.Timeout (script_http.go:18-20, 34-36); a slow endpoint is waited out with no upper bound")
+	// A response slower than the configured timeout never reaches the script.
+	t.Run("slow response is abandoned", func(t *testing.T) {
+		slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			time.Sleep(2 * time.Second)
+			_, _ = w.Write([]byte("late"))
+		}))
+		t.Cleanup(slow.Close)
+
+		HTTPTimeout = 250 * time.Millisecond
+		ic := testInterpreter()
+		hc := &httpclient{obj: ic}
+
+		start := time.Now()
+		got := hc.Get(slow.URL)
+		elapsed := time.Since(start)
+
+		if elapsed >= 2*time.Second {
+			t.Fatalf("Get() returned after %v; the %v HTTPTimeout was not applied", elapsed, HTTPTimeout)
+		}
+		if !strings.HasPrefix(got, httpFailurePrefix) {
+			t.Fatalf("Get() = %q after the client timeout; want a failure string starting with %q", got, httpFailurePrefix)
+		}
+
+		start = time.Now()
+		auth := hc.GetWithBasicAuth(slow.URL, "a", "b")
+		if elapsed := time.Since(start); elapsed >= 2*time.Second {
+			t.Fatalf("GetWithBasicAuth() returned after %v; the %v HTTPTimeout was not applied", elapsed, HTTPTimeout)
+		}
+		if !strings.HasPrefix(auth, httpFailurePrefix) {
+			t.Fatalf("GetWithBasicAuth() = %q after the client timeout; want a failure string starting with %q", auth, httpFailurePrefix)
+		}
+	})
+
+	// A response inside the timeout is waited out, as before.
+	t.Run("response within the timeout is waited out", func(t *testing.T) {
+		slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			time.Sleep(200 * time.Millisecond)
+			_, _ = w.Write([]byte("late"))
+		}))
+		t.Cleanup(slow.Close)
+
+		HTTPTimeout = defaultHTTPTimeout
+		ic := testInterpreter()
+		hc := &httpclient{obj: ic}
+
+		start := time.Now()
+		if got := hc.Get(slow.URL); got != "late" {
+			t.Fatalf("Get() = %q; want %q", got, "late")
+		}
+		if elapsed := time.Since(start); elapsed < 150*time.Millisecond {
+			t.Fatalf("Get() returned after %v; want it to have waited for the slow response", elapsed)
+		}
+	})
 }
 
 func TestScriptHTTP_InterpreterExposesBothHelpers(t *testing.T) {

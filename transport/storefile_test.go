@@ -84,8 +84,10 @@ type stubConn struct{ db *stubDB }
 func (c stubConn) Prepare(string) (driver.Stmt, error) {
 	return nil, errors.New("stubConn: Prepare not implemented")
 }
-func (c stubConn) Close() error              { return nil }
-func (c stubConn) Begin() (driver.Tx, error) { return nil, errors.New("stubConn: Begin not implemented") }
+func (c stubConn) Close() error { return nil }
+func (c stubConn) Begin() (driver.Tx, error) {
+	return nil, errors.New("stubConn: Begin not implemented")
+}
 
 func namedValuesToValues(args []driver.NamedValue) []driver.Value {
 	vals := make([]driver.Value, 0, len(args))
@@ -324,29 +326,41 @@ func TestStoreFile_Transport_SurfacesDatabaseError(t *testing.T) {
 	}
 }
 
-// TestStoreFile_Transport_NilQueriesPanics documents CURRENT behaviour: the
-// plugin dereferences the package-level model.Queries unconditionally, so a
-// process that never ran model.InitDb() (or whose DB failed to initialise)
-// panics inside the job worker instead of returning an error. Pinned, not
-// fixed, because production code must not change here.
-func TestStoreFile_Transport_NilQueriesPanics(t *testing.T) {
+// TestStoreFile_Transport_NilQueriesReturnsError pins that a process which
+// never ran model.InitDb() (or whose database failed to initialise) fails the
+// job instead of panicking the worker: storefile must report the missing
+// database as an error, never dereference the nil model.Queries.
+//
+// (Replaces TestStoreFile_Transport_NilQueriesPanics, which pinned the panic.)
+func TestStoreFile_Transport_NilQueriesReturnsError(t *testing.T) {
 	prevQueries := model.Queries
 	model.Queries = nil
 	t.Cleanup(func() { model.Queries = prevQueries })
 
-	s := &StoreFile{}
-	if err := s.SetContext(ctxWithUser("alice")); err != nil {
-		t.Fatal(err)
+	tests := []struct {
+		name    string
+		payload any
+	}{
+		{"string payload", "payload"},
+		{"byte payload", []byte("payload")},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &StoreFile{}
+			if err := s.SetContext(ctxWithUser("alice")); err != nil {
+				t.Fatal(err)
+			}
 
-	defer func() {
-		caught := recover()
-		if caught == nil {
-			t.Fatalf("Transport() with model.Queries == nil did NOT panic; current behaviour changed (storefile.go:48 dereferences model.Queries)")
-		}
-		t.Logf("pinned behaviour: model.Queries == nil panics with %v (storefile.go:48)", caught)
-	}()
-	_ = s.Transport("out.bin", "payload")
+			// A panic here fails the test: the plugin must return, not unwind.
+			err := s.Transport("out.bin", tt.payload)
+			if err == nil {
+				t.Fatal("Transport() with model.Queries == nil returned a nil error; want a database error")
+			}
+			if !strings.Contains(err.Error(), "database is not initialised") {
+				t.Errorf("Transport() = %q; want it to report that the database is not initialised", err.Error())
+			}
+		})
+	}
 }
 
 func TestStoreFile_Contract_Surface(t *testing.T) {
