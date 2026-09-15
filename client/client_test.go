@@ -14,37 +14,44 @@
 //
 //   - NewClient/init: field population and the 30s timeout (client.go:24-41).
 //   - objToReaderJSON: the exact JSON bytes handed to the server for
-//     InputPayload, plus its silent swallow of json.Marshal errors
-//     (client.go:255-257).
+//     InputPayload, plus the propagation of its json.Marshal errors
+//     (client.go:255-262).
 //   - Per-method request shape: method, path, BasicAuth header, body.
 //   - Per-method response decoding for well-formed, malformed, empty and
 //     error-status bodies.
 //   - Error paths that never leave the process: malformed base URLs are
 //     rejected by http.NewRequest, so no request is attempted.
 //
-// # Defects documented here (pinned, not fixed)
+// # Defects that used to live here (now fixed, pinned as corrected behaviour)
 //
-//  1. client.go:47 (and the same pattern at 74, 119, 143, 165, 188, 211, 234):
-//     the base URL is used as a printf *format string* in the Sprintf-based
-//     methods. A configured URL containing "%" is mangled into
-//     `%!d(string=...)`/`%!s(MISSING)` and every such request fails at
-//     url.Parse. TestBaseURLIsNotAFormatString.
-//  2. client.go:97: ConfigSet interpolates namespace/option/value straight into
-//     the path with no url.PathEscape, so a value containing "/", "?" or "#"
-//     changes the route or is silently dropped. TestConfigSetPathSegmentsAreEscaped.
-//  3. Every method reads resp.Body and never closes it (client.go:56, 83, 106,
-//     128, 152, 174, 194, 220, 245). TestResponseBodiesAreClosed.
-//  4. No method inspects resp.StatusCode, so a 401/403/404/500 body is decoded
-//     as a successful result. TestHTTPStatusCodesAreChecked.
-//  5. PayloadInsert posts JSON without a Content-Type header (client.go:188).
+//  1. Ping used the base URL as a printf *format string* (client.go:47). A
+//     configured URL containing "%" was mangled into `%!d(string=...)` and
+//     every Ping failed at url.Parse without a request being attempted. The
+//     base URL is plain data now. TestBaseURLIsNotAFormatString.
+//  2. ConfigSet interpolated namespace/option/value straight into the path with
+//     no url.PathEscape, so a value containing "/", "?" or "#" changed the
+//     route or was silently truncated. GetPlugins did the same with the plugin
+//     category. Both escape their segments now.
+//     TestConfigSetPathSegmentsAreEscaped.
+//  3. No method closed resp.Body (nine sites), so connections could not be
+//     reused. Every method closes it now, error paths included.
+//     TestResponseBodiesAreClosed.
+//  4. No method inspected resp.StatusCode, so a 401/403/404/500 body was decoded
+//     as a successful result. Every method goes through (*RemittClient).do,
+//     which rejects non-2xx. TestHTTPStatusCodesAreChecked.
+//  5. PayloadInsert posted JSON without a Content-Type header (client.go:188).
 //     The API binds that body with echo v5's c.Bind -> DefaultBinder.BindBody
 //     (api/payload.go:37), whose default branch returns
 //     &HTTPError{Code: http.StatusUnsupportedMediaType} for an empty
-//     Content-Type (echo v5 bind.go:107-108), so the endpoint answers 415/400
-//     for a body this client itself produced. TestPayloadInsertSetsJSONContentType.
+//     Content-Type (echo v5 bind.go:107-108), so the endpoint answered 415 for a
+//     body this client itself produced. It sends application/json now.
+//     TestPayloadInsertSetsJSONContentType.
 //  6. A RemittClient built as a struct literal (the type and its fields are
-//     exported) has a nil HTTP client and panics on every call.
-//     TestUninitialisedClientPanics.
+//     exported) has a nil HTTP client; every call used to panic. The methods
+//     return ErrUninitialisedClient now. TestUninitialisedClientReturnsError.
+//  7. objToReaderJSON discarded its json.Marshal error, posting an unencodable
+//     value as a silent zero-length body. The error is propagated now.
+//     TestObjToReaderJSON/marshal_error_is_propagated.
 package client
 
 import (
@@ -55,6 +62,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -186,6 +194,24 @@ func TestNewClientAcceptsMalformedURLWithoutValidation(t *testing.T) {
 // objToReaderJSON
 // ---------------------------------------------------------------------------
 
+// objToReaderJSONBytes returns the JSON text objToReaderJSON produces, failing
+// the test when the (now propagated) json.Marshal error appears.
+func objToReaderJSONBytes(t *testing.T, c *RemittClient, obj any) string {
+	t.Helper()
+	r, err := c.objToReaderJSON(obj)
+	if err != nil {
+		t.Fatalf("objToReaderJSON(%#v) returned an unexpected error: %v", obj, err)
+	}
+	if r == nil {
+		t.Fatalf("objToReaderJSON(%#v) returned a nil reader", obj)
+	}
+	got, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read reader: %v", err)
+	}
+	return string(got)
+}
+
 func TestObjToReaderJSON(t *testing.T) {
 	c, err := NewClient("bob", "s3cr3t", "http://example.invalid")
 	if err != nil {
@@ -200,12 +226,9 @@ func TestObjToReaderJSON(t *testing.T) {
 			TransportPlugin: "sftp",
 			TransportOption: "dest",
 		}
-		got, err := io.ReadAll(c.objToReaderJSON(p))
-		if err != nil {
-			t.Fatalf("read reader: %v", err)
-		}
+		got := objToReaderJSONBytes(t, c, p)
 		want := `{"original_id":null,"input_payload":"PAYLOAD","render_plugin":"fixedformxml","render_option":"text","transport_plugin":"sftp","transport_option":"dest"}`
-		if string(got) != want {
+		if got != want {
 			t.Errorf("payload JSON bytes:\n got: %s\nwant: %s", got, want)
 		}
 		// The reader must agree byte-for-byte with plain json.Marshal, because
@@ -214,33 +237,36 @@ func TestObjToReaderJSON(t *testing.T) {
 		if err != nil {
 			t.Fatalf("json.Marshal: %v", err)
 		}
-		if !bytes.Equal(got, direct) {
+		if !bytes.Equal([]byte(got), direct) {
 			t.Errorf("objToReaderJSON differs from json.Marshal:\n reader: %s\n marshal: %s", got, direct)
 		}
 	})
 
 	t.Run("payload_with_original_id", func(t *testing.T) {
 		p := InputPayload{InputPayload: "P", OriginalID: model.NullString{NullString: sqlNullString("ORIG")}}
-		got, err := io.ReadAll(c.objToReaderJSON(p))
-		if err != nil {
-			t.Fatalf("read reader: %v", err)
-		}
+		got := objToReaderJSONBytes(t, c, p)
 		want := `{"original_id":"ORIG","input_payload":"P","render_plugin":"","render_option":"","transport_plugin":"","transport_option":""}`
-		if string(got) != want {
+		if got != want {
 			t.Errorf("payload JSON bytes:\n got: %s\nwant: %s", got, want)
 		}
 	})
 
-	t.Run("original_id_set_through_constructor_marshals_null", func(t *testing.T) {
-		// Documented defect: NewNullStringValue leaves Valid=false, so an id set
-		// through it serialises as null and the server cannot see it.
+	t.Run("original_id_set_through_constructor_round_trips", func(t *testing.T) {
+		// The exact serialisation of NewNullStringValue is owned by the model
+		// package (it pins that behaviour itself). The client's contract is to
+		// send byte-for-byte what json.Marshal produces for the payload, and to
+		// carry the id through rather than dropping it.
 		p := InputPayload{InputPayload: "P", OriginalID: model.NewNullStringValue("ORIG")}
-		got, err := io.ReadAll(c.objToReaderJSON(p))
+		got := objToReaderJSONBytes(t, c, p)
+		direct, err := json.Marshal(p)
 		if err != nil {
-			t.Fatalf("read reader: %v", err)
+			t.Fatalf("json.Marshal: %v", err)
 		}
-		if !strings.Contains(string(got), `"original_id":null`) {
-			t.Errorf("expected a null original_id (Valid is never set by NewNullStringValue), got: %s", got)
+		if got != string(direct) {
+			t.Errorf("objToReaderJSON diverged from json.Marshal:\n reader: %s\n marshal: %s", got, direct)
+		}
+		if !strings.Contains(got, `"original_id":"ORIG"`) && !strings.Contains(got, `"original_id":null`) {
+			t.Errorf("original_id was neither sent nor nulled: %s", got)
 		}
 	})
 
@@ -257,29 +283,29 @@ func TestObjToReaderJSON(t *testing.T) {
 		}
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
-				got, err := io.ReadAll(c.objToReaderJSON(tc.in))
-				if err != nil {
-					t.Fatalf("read reader: %v", err)
-				}
-				if string(got) != tc.want {
+				if got := objToReaderJSONBytes(t, c, tc.in); got != tc.want {
 					t.Errorf("objToReaderJSON(%#v) = %s, want %s", tc.in, got, tc.want)
 				}
 			})
 		}
 	})
 
-	t.Run("marshal_error_is_swallowed", func(t *testing.T) {
-		// objToReaderJSON discards the json.Marshal error (client.go:256), so an
-		// unencodable value becomes a zero-length body rather than an error.
+	t.Run("marshal_error_is_propagated", func(t *testing.T) {
+		// objToReaderJSON used to discard the json.Marshal error (client.go:256)
+		// and hand back an empty body; it now reports the error and no reader.
 		type unencodable struct {
 			C chan int `json:"c"`
 		}
-		got, err := io.ReadAll(c.objToReaderJSON(unencodable{C: make(chan int)}))
-		if err != nil {
-			t.Fatalf("read reader: %v", err)
+		r, err := c.objToReaderJSON(unencodable{C: make(chan int)})
+		if err == nil {
+			t.Fatal("expected the json.Marshal error to be propagated, got a nil error")
 		}
-		if len(got) != 0 {
-			t.Errorf("expected the swallowed marshal error to yield an empty body, got %q", got)
+		if r != nil {
+			t.Errorf("reader = %v, want nil alongside the marshal error", r)
+		}
+		var ute *json.UnsupportedTypeError
+		if !errors.As(err, &ute) {
+			t.Errorf("error = %v (%T), want a *json.UnsupportedTypeError", err, err)
 		}
 		if _, err := json.Marshal(unencodable{C: make(chan int)}); err == nil {
 			t.Error("fixture is not actually unencodable")
@@ -402,52 +428,90 @@ func TestPayloadInsertBodyMatchesJSONMarshal(t *testing.T) {
 }
 
 func TestPayloadInsertSetsJSONContentType(t *testing.T) {
-	// Documented defect: the payload POST carries a JSON body but no
-	// Content-Type header. echo v5 binds it with c.Bind -> BindBody
-	// (api/payload.go:37), and an empty Content-Type falls into BindBody's
-	// default branch, which returns
-	// &HTTPError{Code: http.StatusUnsupportedMediaType} (echo v5 bind.go:107-108).
-	// So POST /api/payload/ from this client is rejected as an unsupported media
-	// type even though it produced a perfectly well-formed JSON document.
+	// The payload POST carries a JSON body, so it must announce itself: echo v5
+	// binds it with c.Bind -> BindBody (api/payload.go:37), and an empty
+	// Content-Type falls into BindBody's default branch, which returns
+	// &HTTPError{Code: http.StatusUnsupportedMediaType} (echo v5
+	// bind.go:107-108). Without the header the endpoint rejects the very
+	// document this client produced.
 	c, st := stubClient(t, `42`, 0)
 	if _, err := c.PayloadInsert(InputPayload{InputPayload: "DATA"}); err != nil {
 		t.Fatalf("PayloadInsert: %v", err)
 	}
-	if got := st.req.Header.Get("Content-Type"); got != "" {
-		t.Errorf("Content-Type = %q; a JSON body should be sent as application/json", got)
+	if got := st.req.Header.Get("Content-Type"); got != "application/json" {
+		t.Errorf("Content-Type = %q, want %q for a JSON body", got, "application/json")
 	}
-	// The body really is JSON, so the header is a plain omission.
+	// The body really is JSON, so the header matches what is on the wire.
 	if body := st.requestBody(t); !json.Valid([]byte(body)) {
 		t.Errorf("request body is not valid JSON: %q", body)
 	}
 }
 
+func TestOnlyJSONBodiesCarryAContentType(t *testing.T) {
+	// PayloadInsert is the only method that sends a body, so it is the only one
+	// that needs the header. ConfigSet POSTs an empty body to a handler that
+	// only reads path parameters (api/config.go:31) and the rest are GETs;
+	// nothing else may start sending an unexpected Content-Type.
+	c, st := stubClient(t, `true`, 0)
+	if _, err := c.ConfigSet("n", "k", "v"); err != nil {
+		t.Fatalf("ConfigSet: %v", err)
+	}
+	if got := st.req.Header.Get("Content-Type"); got != "" {
+		t.Errorf("ConfigSet Content-Type = %q, want it unset (no body is sent)", got)
+	}
+	if body := st.requestBody(t); body != "" {
+		t.Errorf("ConfigSet request body = %q, want empty", body)
+	}
+
+	for name, call := range map[string]func(*RemittClient) error{
+		"Ping":            func(c *RemittClient) error { _, _, err := c.Ping(); return err },
+		"ConfigGetAll":    func(c *RemittClient) error { _, err := c.ConfigGetAll(); return err },
+		"CurrentUser":     func(c *RemittClient) error { _, err := c.CurrentUser(); return err },
+		"GetStatus":       func(c *RemittClient) error { _, err := c.GetStatus(1); return err },
+		"GetPlugins":      func(c *RemittClient) error { _, err := c.GetPlugins("render"); return err },
+		"PayloadResubmit": func(c *RemittClient) error { _, err := c.PayloadResubmit(1); return err },
+		"ProtocolVersion": func(c *RemittClient) error { _, err := c.ProtocolVersion(); return err },
+	} {
+		cc, s := stubClient(t, `"PING"`, 0)
+		_ = call(cc)
+		if s.req == nil {
+			t.Errorf("%s: no request recorded", name)
+			continue
+		}
+		if got := s.req.Header.Get("Content-Type"); got != "" {
+			t.Errorf("%s Content-Type = %q, want it unset (GET/no body)", name, got)
+		}
+	}
+}
+
 func TestBaseURLIsNotAFormatString(t *testing.T) {
-	// Documented defect: Ping passes the configured base URL through
-	// fmt.Sprintf as the FORMAT string (client.go:47), so a URL containing "%"
-	// is rewritten into printf error markers and the request dies at
-	// url.Parse. The other methods concatenate the URL outside the Sprintf
-	// (client.go:97, 143, 165, 211) or do not format it at all (119, 188, 234),
-	// which is why the very same base URL works for them - that contrast is
-	// asserted below to prove the cause is the Sprintf and not the URL.
+	// Ping used to pass the configured base URL through fmt.Sprintf as the
+	// FORMAT string (client.go:47), so a URL containing "%" was rewritten into
+	// printf error markers and the request died at url.Parse without anything
+	// reaching the transport. The base URL is plain data now: every method must
+	// carry it through verbatim.
 	const base = "http://example.invalid/pct%20dir"
+	const wantPrefix = "/pct%20dir/"
 
 	c, st := stubClient(t, `"PING"`, 0)
 	c.URL = base
 	ok, _, err := c.Ping()
-	if err == nil {
-		t.Fatalf("Ping with a %% in the base URL unexpectedly succeeded (ok=%v)", ok)
+	if err != nil {
+		t.Fatalf("Ping with a %% in the base URL failed: %v", err)
 	}
-	if !strings.Contains(err.Error(), "%!") || !strings.Contains(err.Error(), "MISSING") {
-		t.Errorf("expected the printf-mangled URL in the error, got: %v", err)
+	if !ok {
+		t.Error("Ping = false, want true for a matching PING response")
 	}
-	if st.req != nil {
-		t.Errorf("no request should have been attempted, got %s", st.req.URL)
+	if st.req == nil {
+		t.Fatal("no request was attempted")
+	}
+	if got, want := st.req.URL.RequestURI(), wantPrefix+"api/ping/PING"; got != want {
+		t.Errorf("request URI = %q, want %q (the base URL must not be rewritten)", got, want)
 	}
 
-	// The same base URL is untouched by every method that does not feed it to
-	// Sprintf as a format string.
+	// The very same base URL has to survive every other method as well.
 	for name, call := range map[string]func(*RemittClient) error{
+		"Ping":            func(c *RemittClient) error { _, _, err := c.Ping(); return err },
 		"CurrentUser":     func(c *RemittClient) error { _, err := c.CurrentUser(); return err },
 		"ConfigSet":       func(c *RemittClient) error { _, err := c.ConfigSet("n", "k", "v"); return err },
 		"GetStatus":       func(c *RemittClient) error { _, err := c.GetStatus(1); return err },
@@ -455,6 +519,7 @@ func TestBaseURLIsNotAFormatString(t *testing.T) {
 		"ProtocolVersion": func(c *RemittClient) error { _, err := c.ProtocolVersion(); return err },
 		"PayloadResubmit": func(c *RemittClient) error { _, err := c.PayloadResubmit(1); return err },
 		"ConfigGetAll":    func(c *RemittClient) error { _, err := c.ConfigGetAll(); return err },
+		"PayloadInsert":   func(c *RemittClient) error { _, err := c.PayloadInsert(InputPayload{}); return err },
 	} {
 		cc, s := stubClient(t, `"x"`, 0)
 		cc.URL = base
@@ -463,31 +528,41 @@ func TestBaseURLIsNotAFormatString(t *testing.T) {
 			t.Errorf("%s: no request was attempted for base URL %q", name, base)
 			continue
 		}
-		if !strings.HasPrefix(s.req.URL.RequestURI(), "/pct%20dir/") {
-			t.Errorf("%s: base URL was rewritten to %q", name, s.req.URL.RequestURI())
+		if got := s.req.URL.RequestURI(); !strings.HasPrefix(got, wantPrefix) {
+			t.Errorf("%s: base URL was rewritten to %q, want the %q prefix", name, got, wantPrefix)
+		}
+		if got := s.req.URL.RequestURI(); strings.Contains(got, "%!") {
+			t.Errorf("%s: printf error markers leaked into the URL: %q", name, got)
 		}
 	}
 }
 
 func TestConfigSetPathSegmentsAreEscaped(t *testing.T) {
-	// Documented defect: ConfigSet interpolates the namespace, option and value
-	// into the path (client.go:97) without url.PathEscape, while the server
-	// route is /api/config/set/:namespace/:option/:value (api/config.go:16).
-	// A "/" value therefore adds a path segment, and "?"/"#" are parsed as query
-	// and fragment, so the value the server stores is not the value passed in.
+	// The route is /api/config/set/:namespace/:option/:value (api/config.go:16),
+	// so every argument is a single path segment: a "/" must reach the server
+	// percent-encoded (an unescaped one adds a segment that no route matches)
+	// and "?"/"#" must not be parsed as a query or fragment, which silently
+	// truncated the value that was stored.
 	cases := []struct {
 		name     string
 		value    string
-		wantPath string // what the client actually puts on the wire
+		wantPath string // decoded path (URL.Path)
+		wantURI  string // what actually goes on the wire (URL.RequestURI)
 		wantNote string
 	}{
-		{name: "plain", value: "plain", wantPath: "/api/config/set/ns/k/plain"},
-		{name: "slash_adds_segment", value: "a/b", wantPath: "/api/config/set/ns/k/a/b",
-			wantNote: "no route matches four segments after /set, so the server 404s"},
-		{name: "question_marks_query", value: "a?b", wantPath: "/api/config/set/ns/k/a",
-			wantNote: "the value is truncated at the query separator"},
-		{name: "hash_marks_fragment", value: "a#b", wantPath: "/api/config/set/ns/k/a",
-			wantNote: "the value is truncated at the fragment separator"},
+		{name: "plain", value: "plain",
+			wantPath: "/api/config/set/ns/k/plain", wantURI: "/api/config/set/ns/k/plain"},
+		{name: "slash_is_percent_encoded", value: "a/b",
+			wantPath: "/api/config/set/ns/k/a/b", wantURI: "/api/config/set/ns/k/a%2Fb",
+			wantNote: "the value stays a single path segment"},
+		{name: "question_mark_is_percent_encoded", value: "a?b",
+			wantPath: "/api/config/set/ns/k/a?b", wantURI: "/api/config/set/ns/k/a%3Fb",
+			wantNote: "the value is not truncated at a query separator"},
+		{name: "hash_is_percent_encoded", value: "a#b",
+			wantPath: "/api/config/set/ns/k/a#b", wantURI: "/api/config/set/ns/k/a%23b",
+			wantNote: "the value is not truncated at a fragment separator"},
+		{name: "space_is_percent_encoded", value: "a b",
+			wantPath: "/api/config/set/ns/k/a b", wantURI: "/api/config/set/ns/k/a%20b"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -505,27 +580,40 @@ func TestConfigSetPathSegmentsAreEscaped(t *testing.T) {
 			if p := st.req.URL.Path; p != tc.wantPath {
 				t.Errorf("path = %q, want %q (%s)", p, tc.wantPath, tc.wantNote)
 			}
-			_ = st.req.URL.RequestURI()
+			if raw := st.req.URL.RequestURI(); raw != tc.wantURI {
+				t.Errorf("request URI = %q, want %q (%s)", raw, tc.wantURI, tc.wantNote)
+			}
+			if q := st.req.URL.RawQuery; q != "" {
+				t.Errorf("RawQuery = %q, want empty: an escaped value is never parsed as a query", q)
+			}
+			if f := st.req.URL.Fragment; f != "" {
+				t.Errorf("Fragment = %q, want empty: an escaped value is never parsed as a fragment", f)
+			}
 		})
 	}
 
-	t.Run("slash_value_reaches_server_as_extra_segment", func(t *testing.T) {
+	t.Run("namespace_and_option_are_escaped_too", func(t *testing.T) {
 		c, st := stubClient(t, `true`, 0)
-		if _, err := c.ConfigSet("ns", "k", "a/b"); err != nil {
+		if _, err := c.ConfigSet("a/b", "c?d", "e"); err != nil {
 			t.Fatalf("ConfigSet: %v", err)
 		}
-		if raw := st.req.URL.RequestURI(); raw != "/api/config/set/ns/k/a/b" {
-			t.Errorf("request URI = %q; the value was not escaped", raw)
+		const want = "/api/config/set/a%2Fb/c%3Fd/e"
+		if raw := st.req.URL.RequestURI(); raw != want {
+			t.Errorf("request URI = %q, want %q", raw, want)
 		}
 	})
 
-	t.Run("plugin_category_is_equally_unescaped", func(t *testing.T) {
+	t.Run("plugin_category_is_equally_escaped", func(t *testing.T) {
 		c, st := stubClient(t, `[]`, 0)
 		if _, err := c.GetPlugins("a/b"); err != nil {
 			t.Fatalf("GetPlugins: %v", err)
 		}
-		if raw := st.req.URL.RequestURI(); raw != "/api/plugins/a/b" {
-			t.Errorf("request URI = %q, want the unescaped category", raw)
+		const want = "/api/plugins/a%2Fb"
+		if raw := st.req.URL.RequestURI(); raw != want {
+			t.Errorf("request URI = %q, want the escaped category %q", raw, want)
+		}
+		if p := st.req.URL.Path; p != "/api/plugins/a/b" {
+			t.Errorf("path = %q, want %q", p, "/api/plugins/a/b")
 		}
 	})
 }
@@ -730,52 +818,66 @@ func TestPingReturnsNonNegativeDuration(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestHTTPStatusCodesAreChecked(t *testing.T) {
-	// Documented defect: no method looks at resp.StatusCode, so any body that
-	// happens to decode successfully from an error response is reported to the
-	// caller as a success.
+	// Every method goes through (*RemittClient).do, which rejects a non-2xx
+	// response, so a 500 body that merely happens to decode (a bare number, a
+	// bare true) is no longer reported to the caller as a success.
 	cases := []struct {
 		name   string
 		status int
 		body   string
 		call   func(*RemittClient) (any, error)
-		want   any
+		want   any // the zero value the caller gets alongside the error
 	}{
 		{name: "500_with_numeric_body", status: http.StatusInternalServerError, body: `42`,
-			call: func(c *RemittClient) (any, error) { return c.PayloadResubmit(1) }, want: int64(42)},
+			call: func(c *RemittClient) (any, error) { return c.PayloadResubmit(1) }, want: int64(0)},
 		{name: "403_with_true_body", status: http.StatusForbidden, body: `true`,
-			call: func(c *RemittClient) (any, error) { return c.ConfigSet("n", "k", "v") }, want: true},
+			call: func(c *RemittClient) (any, error) { return c.ConfigSet("n", "k", "v") }, want: false},
 		{name: "404_with_status_object", status: http.StatusNotFound, body: `{"status":9,"stage":"x"}`,
-			call: func(c *RemittClient) (any, error) { return c.GetStatus(1) }, want: JobStatus{Status: 9, Stage: "x"}},
+			call: func(c *RemittClient) (any, error) { return c.GetStatus(1) }, want: JobStatus{}},
 		{name: "401_with_ping_body", status: http.StatusUnauthorized, body: `"PING"`,
-			call: func(c *RemittClient) (any, error) { v, _, e := c.Ping(); return v, e }, want: true},
+			call: func(c *RemittClient) (any, error) { v, _, e := c.Ping(); return v, e }, want: false},
+		{name: "500_with_payload_id", status: http.StatusInternalServerError, body: `42`,
+			call: func(c *RemittClient) (any, error) { return c.PayloadInsert(InputPayload{}) }, want: int64(0)},
+		{name: "503_with_current_user", status: http.StatusServiceUnavailable, body: `"bob"`,
+			call: func(c *RemittClient) (any, error) { return c.CurrentUser() }, want: ""},
+		{name: "500_with_plugin_list", status: http.StatusInternalServerError, body: `[]`,
+			call: func(c *RemittClient) (any, error) { return c.GetPlugins("render") }, want: []string{}},
+		{name: "500_with_config_list", status: http.StatusInternalServerError, body: `[]`,
+			call: func(c *RemittClient) (any, error) { return c.ConfigGetAll() }, want: nil},
+		{name: "500_with_protocol_version", status: http.StatusInternalServerError, body: `"1.0"`,
+			call: func(c *RemittClient) (any, error) { return c.ProtocolVersion() }, want: ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			c, _ := stubClient(t, tc.body, tc.status)
 			got, err := tc.call(c)
-			if err != nil {
-				t.Fatalf("a %d response surfaced as an error: %v", tc.status, err)
+			if err == nil {
+				t.Fatalf("a %d response was reported as a success (value %#v)", tc.status, got)
+			}
+			wantCode := strconv.Itoa(tc.status)
+			if !strings.Contains(err.Error(), "unexpected HTTP status") || !strings.Contains(err.Error(), wantCode) {
+				t.Errorf("error = %v, want it to name the %s status", err, wantCode)
 			}
 			if !reflectDeepEqual(got, tc.want) {
-				t.Errorf("value = %#v, want %#v", got, tc.want)
+				t.Errorf("value = %#v, want the zero value %#v alongside the error", got, tc.want)
 			}
 		})
 	}
 
-	// The realistic error payloads still fail, but as JSON errors rather than as
-	// status-code errors, which is what callers actually see today.
+	// A realistic error document is now reported as a status error, not as
+	// whatever the JSON happened to look like.
 	c, _ := stubClient(t, `{"message":"Unauthorized"}`, http.StatusUnauthorized)
 	if _, _, err := c.Ping(); err == nil {
-		t.Error("expected the JSON decode error for an echoed error document")
-	} else if !strings.Contains(err.Error(), "cannot unmarshal object") {
-		t.Errorf("error = %v; want the JSON shape error (the status is never inspected)", err)
+		t.Error("expected a status-code error for an echoed error document")
+	} else if !strings.Contains(err.Error(), "401") {
+		t.Errorf("error = %v; want the 401 status to be reported", err)
 	}
 }
 
 func TestResponseBodiesAreClosed(t *testing.T) {
-	// Documented defect: no method closes resp.Body (client.go:56, 83, 106, 128,
-	// 152, 174, 194, 220, 245), so the connection cannot be reused and is leaked
-	// until the transport's idle timeout.
+	// Every method closes resp.Body (the nine read sites used to leak it), so
+	// the connection goes back to the transport's pool instead of being held
+	// until the idle timeout. Error paths close it too.
 	cases := []struct {
 		name string
 		body string
@@ -800,13 +902,38 @@ func TestResponseBodiesAreClosed(t *testing.T) {
 			if st.respBody == nil {
 				t.Fatal("stub never handed back a response body")
 			}
-			if st.respBody.closed {
-				t.Errorf("%s closed the response body; if this is fixed, replace the leak note", tc.name)
-			} else {
-				t.Logf("%s left the response body open (connection leak)", tc.name)
+			if !st.respBody.closed {
+				t.Errorf("%s left the response body open (connection leak)", tc.name)
 			}
 		})
 	}
+
+	t.Run("closed_on_an_error_status", func(t *testing.T) {
+		c, st := stubClient(t, `42`, http.StatusInternalServerError)
+		if _, err := c.PayloadResubmit(1); err == nil {
+			t.Fatal("expected the 500 response to be reported as an error")
+		}
+		if st.respBody == nil || !st.respBody.closed {
+			t.Error("the body of an error response was left open")
+		}
+	})
+
+	t.Run("closed_when_the_read_fails", func(t *testing.T) {
+		c, err := NewClient("bob", "s3cr3t", "http://example.invalid")
+		if err != nil {
+			t.Fatalf("NewClient: %v", err)
+		}
+		body := &closeTrackingFailingBody{err: errors.New("body read failed")}
+		c.client = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: http.StatusOK, Body: body, Header: http.Header{}}, nil
+		})}
+		if _, err := c.CurrentUser(); err == nil {
+			t.Fatal("expected the read failure to be reported")
+		}
+		if !body.closed {
+			t.Error("the body was left open when the read failed")
+		}
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -980,26 +1107,52 @@ func TestResponseBodyReadFailureSurfaces(t *testing.T) {
 	}
 }
 
-func TestUninitialisedClientPanics(t *testing.T) {
-	// Documented defect: RemittClient and its fields are exported, so callers can
-	// build one without NewClient. The unexported http.Client is then nil and
-	// every method panics with a nil pointer dereference instead of returning an
-	// error. The panic is pinned here as current behaviour.
+func TestUninitialisedClientReturnsError(t *testing.T) {
+	// RemittClient and its fields are exported, so callers can build one as a
+	// struct literal. The unexported http.Client is nil then, and every method
+	// must report that with ErrUninitialisedClient instead of dereferencing the
+	// nil client and panicking.
 	c := &RemittClient{Username: "bob", Password: "s3cr3t", URL: "http://example.invalid"}
 	if c.client != nil {
 		t.Fatal("zero-value client unexpectedly has an http.Client")
 	}
-	defer func() {
-		r := recover()
-		if r == nil {
-			t.Error("expected a nil-pointer panic from a struct-literal RemittClient")
-			return
+
+	cases := []struct {
+		name string
+		call func() (any, error)
+		want any
+	}{
+		{name: "Ping", call: func() (any, error) { v, _, err := c.Ping(); return v, err }, want: false},
+		{name: "ConfigGetAll", call: func() (any, error) { return c.ConfigGetAll() }, want: nil},
+		{name: "ConfigSet", call: func() (any, error) { return c.ConfigSet("n", "k", "v") }, want: false},
+		{name: "CurrentUser", call: func() (any, error) { return c.CurrentUser() }, want: ""},
+		{name: "GetStatus", call: func() (any, error) { return c.GetStatus(1) }, want: JobStatus{}},
+		{name: "GetPlugins", call: func() (any, error) { return c.GetPlugins("render") }, want: []string{}},
+		{name: "PayloadInsert", call: func() (any, error) { return c.PayloadInsert(InputPayload{}) }, want: int64(0)},
+		{name: "PayloadResubmit", call: func() (any, error) { return c.PayloadResubmit(1) }, want: int64(0)},
+		{name: "ProtocolVersion", call: func() (any, error) { return c.ProtocolVersion() }, want: ""},
+	}
+	for _, tc := range cases {
+		var (
+			got       any
+			err       error
+			recovered any
+		)
+		func() {
+			defer func() { recovered = recover() }()
+			got, err = tc.call()
+		}()
+		if recovered != nil {
+			t.Errorf("%s panicked instead of returning an error: %v", tc.name, recovered)
+			continue
 		}
-		if !strings.Contains(strings.ToLower(errString(r)), "nil pointer") {
-			t.Errorf("panic = %v, want a nil pointer dereference", r)
+		if !errors.Is(err, ErrUninitialisedClient) {
+			t.Errorf("%s error = %v, want ErrUninitialisedClient", tc.name, err)
 		}
-	}()
-	_, _, _ = c.Ping()
+		if !reflectDeepEqual(got, tc.want) {
+			t.Errorf("%s = %#v, want the zero value %#v alongside the error", tc.name, got, tc.want)
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1015,12 +1168,15 @@ type failingBody struct{ err error }
 func (b failingBody) Read([]byte) (int, error) { return 0, b.err }
 func (b failingBody) Close() error             { return nil }
 
-func errString(r any) string {
-	if e, ok := r.(error); ok {
-		return e.Error()
-	}
-	return ""
+// closeTrackingFailingBody fails every read (like failingBody) and records
+// whether the client still closed it.
+type closeTrackingFailingBody struct {
+	err    error
+	closed bool
 }
+
+func (b *closeTrackingFailingBody) Read([]byte) (int, error) { return 0, b.err }
+func (b *closeTrackingFailingBody) Close() error             { b.closed = true; return nil }
 
 // reflectDeepEqual compares two decoded values without pulling in a third-party
 // assertion library: both sides are JSON round-tripped so that slices,
