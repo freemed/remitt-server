@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/freemed/remitt-server/internal/dbgen"
@@ -47,10 +49,16 @@ func (s *StoreFilePdf) Transport(filename string, data any) error {
 	}
 
 	params := dbgen.InsertFileStoreParams{
-		User:        um.Username,
-		Stamp:       time.Now(),
-		Category:    "output",
-		Filename:    filename,
+		User:     um.Username,
+		Stamp:    time.Now(),
+		Category: fileStoreCategory,
+		// The Java original names the file itself:
+		// StoreFilePdf.java:83-87 builds "<System.currentTimeMillis()>.pdf" and
+		// hands that name to DbFileStore.putFile. Here the caller names the
+		// file (jobqueue builds "<nano>.<ext>" from InputFormat(),
+		// jobqueue.go:351-364), so the plugin enforces the same guarantee on
+		// the caller's name instead of trusting it.
+		Filename:    s.storedFilename(filename),
 		PayloadID:   0,
 		ProcessorID: 0,
 		Content:     sql.NullString{String: string(payload), Valid: true},
@@ -58,6 +66,31 @@ func (s *StoreFilePdf) Transport(filename string, data any) error {
 	}
 	_, err := model.Queries.InsertFileStore(context.Background(), params)
 	return err
+}
+
+// fileStoreCategory is the tFileStore category every row from this plugin
+// carries. Both Java originals pass the literal "output" to
+// DbFileStore.putFile (StoreFile.java:100, StoreFilePdf.java:87) - neither
+// one derives it - and the value is part of the store's unique key
+// (user, category, filename, migrations/001_legacy.up.sql:372), so it must
+// stay byte-identical to the Java.
+const fileStoreCategory = "output"
+
+// storedFilename returns the name the payload is persisted under, satisfying
+// the Java original's guarantee that a StoreFilePdf output is always a
+// ".pdf": the extension comes from this plugin's own input format, exactly as
+// StoreFilePdf.java hardcodes ".pdf" (it does NOT sniff the payload the way
+// StoreFile.java:85-97 does for its pdf/xml/x12/txt cases). A caller-supplied
+// name that already carries that extension is stored verbatim - jobqueue's
+// "<nano>.pdf" therefore lands unchanged - and one that does not gets it
+// appended rather than being persisted under a name that misdescribes the
+// plugin's declared format.
+func (s *StoreFilePdf) storedFilename(filename string) string {
+	ext := "." + s.InputFormat()
+	if strings.EqualFold(filepath.Ext(filename), ext) {
+		return filename
+	}
+	return filename + ext
 }
 
 func (s *StoreFilePdf) InputFormat() string {

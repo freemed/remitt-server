@@ -17,6 +17,9 @@ package transport
 //     payload and an empty body stays distinguishable from a failure
 //   - every request carries the configured http.Client.Timeout (HTTPTimeout)
 //   - response bodies are always closed
+//   - the GoQuery capability is usable from a script through the
+//     string-in/string-out helpers GoQueryText and GoQueryAttribute, while
+//     GoQuery's []byte signature stays as it is for Go callers
 
 import (
 	"encoding/base64"
@@ -152,10 +155,11 @@ func TestScriptHTTP_GetWithBasicAuth_SendsBasicAuthHeader(t *testing.T) {
 
 // TestScriptHTTP_HelpersAreExposedUnderGoCasedNames pins the JS surface a
 // plugin script must use: otto exposes the Go method names verbatim, so the
-// helpers are http.Get / http.GetWithBasicAuth / http.GoQuery - NOT the
-// lowerCamelCase names (e.g. the Java bridge's webClient.getPage style, or
-// http.get) that a script written for the Java transport would use. Calling the
-// camelCase name throws "TypeError: ... is not a function" inside transport().
+// helpers are http.Get / http.GetWithBasicAuth / http.GoQuery /
+// http.GoQueryText / http.GoQueryAttribute - NOT the lowerCamelCase names
+// (e.g. the Java bridge's webClient.getPage style, or http.get) that a script
+// written for the Java transport would use. Calling the camelCase name throws
+// "TypeError: ... is not a function" inside transport().
 func TestScriptHTTP_HelpersAreExposedUnderGoCasedNames(t *testing.T) {
 	ic := testInterpreter()
 
@@ -163,14 +167,16 @@ func TestScriptHTTP_HelpersAreExposedUnderGoCasedNames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("inspecting the http object: %v", err)
 	}
-	if got != "Get,GetWithBasicAuth,GoQuery" {
-		t.Errorf("http exposes %q; want \"Get,GetWithBasicAuth,GoQuery\"", got)
+	if got != "Get,GetWithBasicAuth,GoQuery,GoQueryAttribute,GoQueryText" {
+		t.Errorf("http exposes %q; want \"Get,GetWithBasicAuth,GoQuery,GoQueryAttribute,GoQueryText\"", got)
 	}
 
 	for _, call := range []string{
 		`http.get("http://127.0.0.1:1/")`,
 		`http.getWithBasicAuth("http://127.0.0.1:1/", "a", "b")`,
 		`http.goQuery("<html></html>")`,
+		`http.goQueryText("<html></html>", "span")`,
+		`http.goQueryAttribute("<html></html>", "span", "href")`,
 	} {
 		_, err := ic.vm.Run(`result = ` + call + `;`)
 		if err == nil {
@@ -332,20 +338,90 @@ func TestScriptHTTP_GoQuery_ParsesDocuments(t *testing.T) {
 	}
 }
 
-// TestScriptHTTP_GoQueryIsUnreachableFromJS documents CURRENT behaviour: the
-// helper is installed on the VM as http.GoQuery, but its Go signature takes
-// []byte, which otto cannot produce from a JavaScript string, so a script
-// cannot parse a page it fetched with http.Get.
-func TestScriptHTTP_GoQueryIsUnreachableFromJS(t *testing.T) {
+// TestScriptHTTP_GoQueryIsReachableFromJS pins the corrected behaviour of the
+// defect TestScriptHTTP_GoQueryIsUnreachableFromJS used to document: the
+// GoQuery capability was installed on the VM as http.GoQuery, but its Go
+// signature takes []byte, which otto cannot produce from a JavaScript string
+// ("TypeError: can't convert from \"string\" to \"[]uint8\""), so a script
+// could not parse a page it had fetched with http.Get. The capability is now
+// reachable from a script through string-in/string-out helpers
+// (script_http.go:GoQueryText, GoQueryAttribute); http.GoQuery itself is
+// unchanged for Go callers.
+func TestScriptHTTP_GoQueryIsReachableFromJS(t *testing.T) {
 	ic := testInterpreter()
-	_, err := ic.vm.Run(`result = http.GoQuery("<html><body>x</body></html>");`)
-	if err == nil {
-		t.Fatal("http.GoQuery(string) succeeded from JS; the []byte parameter is now callable - update this test")
+
+	const page = `<html><body><div id="doc" data-claim="claim-42">` +
+		`<h1>Claim</h1>` +
+		`<span class="status">  ACCEPTED  </span>` +
+		`<a class="detail" href="/claims/42">details</a>` +
+		`</div></body></html>`
+
+	// The []byte form stays unusable from JS - that is why the string helpers
+	// exist. Informational: if otto ever learns the conversion, the helpers are
+	// still the supported path.
+	if _, err := ic.vm.Run(`result = http.GoQuery("<html><body>x</body></html>");`); err != nil {
+		t.Logf("http.GoQuery([]byte) remains uncallable from JS: %v", err)
 	}
-	if !strings.Contains(err.Error(), "GoQuery") && !strings.Contains(err.Error(), "convert") && !strings.Contains(err.Error(), "type") {
-		t.Fatalf("http.GoQuery(string) failed with %v; want a conversion error naming GoQuery", err)
+
+	// Select text.
+	got, err := evalJS(t, ic, `page = `+jsQuote(page)+`; result = http.GoQueryText(page, "span.status");`, "result")
+	if err != nil {
+		t.Fatalf("running http.GoQueryText from JS: %v", err)
 	}
-	t.Logf("pinned behaviour: http.GoQuery is not callable from JS: %v", err)
+	if got != "ACCEPTED" {
+		t.Errorf("http.GoQueryText(page, \"span.status\") = %q; want %q (trimmed text of the first match)", got, "ACCEPTED")
+	}
+
+	// Select an attribute.
+	got, err = evalJS(t, ic, `result = http.GoQueryAttribute(page, "div#doc", "data-claim");`, "result")
+	if err != nil {
+		t.Fatalf("running http.GoQueryAttribute from JS: %v", err)
+	}
+	if got != "claim-42" {
+		t.Errorf("http.GoQueryAttribute(page, \"div#doc\", \"data-claim\") = %q; want %q", got, "claim-42")
+	}
+
+	got, err = evalJS(t, ic, `result = http.GoQueryAttribute(page, "a.detail", "href");`, "result")
+	if err != nil {
+		t.Fatalf("running http.GoQueryAttribute for href from JS: %v", err)
+	}
+	if got != "/claims/42" {
+		t.Errorf("http.GoQueryAttribute(page, \"a.detail\", \"href\") = %q; want %q", got, "/claims/42")
+	}
+
+	// A selector that matches nothing, or one cascadia cannot compile, is an
+	// empty result - not a failure, and never a panic out of the VM. goquery
+	// compiles a rejected selector into a matcher that fails every match
+	// (goquery v1.11/v1.12 type.go:compileMatcher), so a typo reads exactly like
+	// an absent element.
+	for _, selector := range []string{"span.nonexistent", "span[["} {
+		got, err = evalJS(t, ic, `result = http.GoQueryText(page, "`+selector+`");`, "result")
+		if err != nil {
+			t.Fatalf("running http.GoQueryText with selector %q from JS: %v", selector, err)
+		}
+		if got != "" {
+			t.Errorf("http.GoQueryText(page, %q) = %q; want \"\" (an unmatched or uncompilable selector is not a failure)", selector, got)
+		}
+	}
+
+	// The capability as a script actually uses it: fetch a page with http.Get,
+	// then reduce the part that matters to a string.
+	srv, _ := newHTTPTestServer(t, http.StatusOK, page)
+	got, err = evalJS(t, ic, `result = http.GoQueryText(http.Get("`+srv.URL+`/"), "span.status");`, "result")
+	if err != nil {
+		t.Fatalf("running http.Get + http.GoQueryText from JS: %v", err)
+	}
+	if got != "ACCEPTED" {
+		t.Errorf("http.GoQueryText(http.Get(url), \"span.status\") = %q; want %q", got, "ACCEPTED")
+	}
+}
+
+// jsQuote renders s as a double-quoted JavaScript string literal. otto's VM is
+// ES5, so no template literals: the HTML fixture's double quotes are escaped.
+func jsQuote(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	return `"` + s + `"`
 }
 
 // TestScriptHTTP_ClientTimeoutIsApplied pins that both helpers bound their

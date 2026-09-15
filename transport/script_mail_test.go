@@ -223,11 +223,15 @@ func TestScriptMail_SendMessage_MissingRecipientReturnsFalse(t *testing.T) {
 	}
 }
 
-// TestScriptMail_SendMessage_NilConfigPanics documents CURRENT behaviour:
-// common.NewMailer() dereferences config.Config unconditionally, so a process
-// whose configuration was never loaded panics inside the job worker when a
-// script calls mail.sendMessage(). Pinned, not fixed.
-func TestScriptMail_SendMessage_NilConfigPanics(t *testing.T) {
+// TestScriptMail_SendMessage_NilConfigReturnsFalse pins the corrected
+// behaviour of the defect this test used to document
+// (TestScriptMail_SendMessage_NilConfigPanics): common.NewMailer()
+// dereferences config.Config unconditionally (common/mail.go:16-20), so a
+// process whose configuration was never loaded panicked inside the job worker
+// when a plugin script called mail.SendMessage(). The script now receives a
+// failure result - the helper returns false and nothing unwinds into the
+// worker.
+func TestScriptMail_SendMessage_NilConfigReturnsFalse(t *testing.T) {
 	prev := config.Config
 	config.Config = nil
 	t.Cleanup(func() { config.Config = prev })
@@ -237,14 +241,26 @@ func TestScriptMail_SendMessage_NilConfigPanics(t *testing.T) {
 	ic := testInterpreter()
 	m := &mail{obj: ic}
 
+	// A panic must fail this test rather than pass as "returned a value".
 	defer func() {
-		caught := recover()
-		if caught == nil {
-			t.Fatal("SendMessage() with config.Config == nil did not panic; current behaviour changed (common/mail.go:16-20)")
+		if caught := recover(); caught != nil {
+			t.Fatalf("SendMessage() with config.Config == nil panicked with %v; a script must receive a failure result, never a panic", caught)
 		}
-		t.Logf("pinned behaviour: config.Config == nil panics with %v (common/mail.go:16-20)", caught)
 	}()
-	_ = m.SendMessage("subject", "text/plain", "body")
+	if ok := m.SendMessage("subject", "text/plain", "body"); ok {
+		t.Fatal("SendMessage() = true with config.Config == nil; want false")
+	}
+
+	// The same call made the way a plugin script makes it: otto must hand the
+	// failure value back to the script instead of a panic escaping the VM and
+	// taking the job worker with it.
+	got, err := evalJS(t, ic, `result = mail.SendMessage("subject", "text/plain", "body");`, "result")
+	if err != nil {
+		t.Fatalf("mail.SendMessage() from JS with config.Config == nil: %v", err)
+	}
+	if got != "false" {
+		t.Fatalf("mail.SendMessage() from JS returned %s with config.Config == nil; want false", got)
+	}
 }
 
 // TestScriptMail_SendMessage_IsCallableFromAPluginScript drives the helper the

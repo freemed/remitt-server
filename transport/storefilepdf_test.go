@@ -6,9 +6,18 @@ package transport
 // (which is what makes jobqueue pick the pdf translator, see
 // translation.ResolveTranslator(jobqueue.go:316)).
 //
-// storefilepdf.go is a byte-for-byte copy of storefile.go apart from
-// InputFormat(), so these tests assert the same persistence contract and would
-// catch the two drifting apart.
+// The two Go plugins necessarily differ, because the Java originals differ:
+// StoreFile.java:85-97 sniffs the payload to pick a pdf/xml/x12/txt extension
+// for the name it builds, while StoreFilePdf.java:83-87 always builds
+// "<millis>.pdf". Both pass the identical category, the literal "output"
+// (StoreFile.java:100, StoreFilePdf.java:87) - neither derives it - and both
+// name the file themselves, whereas this port has jobqueue name it
+// ("<nano>.<ext>", from the plugin's InputFormat()). Asserted here: the
+// category is the Java literal, and the stored name always carries this
+// plugin's own format extension.
+//
+// This file also uses the tiny in-test database stub declared in
+// storefile_test.go; no real database is contacted.
 
 import (
 	"context"
@@ -54,19 +63,77 @@ func TestStoreFilePdf_Transport_InsertsPayloadIntoFileStore(t *testing.T) {
 	if _, ok := call.Args[1].(time.Time); !ok {
 		t.Errorf("arg[1] (stamp) = %#v; want a time.Time", call.Args[1])
 	}
+	// Category: the Java literal both originals pass to DbFileStore.putFile
+	// (StoreFile.java:100, StoreFilePdf.java:87). It is not derived from the
+	// payload or the format by either Java plugin - the reported divergence
+	// does not exist here - and it is half of the store's unique key
+	// (user, category, filename).
 	if got, want := call.Args[2], driver.Value("output"); got != want {
-		t.Errorf("arg[2] (category) = %#v; want %#v", got, want)
+		t.Errorf("arg[2] (category) = %#v; want %#v (the Java literal)", got, want)
 	}
-	// The filename is stored exactly as passed and no ".pdf" is appended by the
-	// plugin: jobqueue already names the file <nano>.<ext>.
+	// The filename carries the plugin's own format extension. This one already
+	// ends in ".pdf" (jobqueue names the file <nano>.<ext>, jobqueue.go:364),
+	// so it is stored verbatim; the extension is appended when the caller's
+	// name does not carry it (see
+	// TestStoreFilePdf_Transport_StoresAPdfFilename).
 	if got, want := call.Args[3], driver.Value("1700000001.pdf"); got != want {
 		t.Errorf("arg[3] (filename) = %#v; want %#v", got, want)
+	}
+	if got := call.Args[3]; !strings.HasSuffix(got.(string), ".pdf") {
+		t.Errorf("arg[3] (filename) = %#v; want a name carrying the plugin's format extension", got)
 	}
 	if got, want := call.Args[6], driver.Value(string(payload)); got != want {
 		t.Errorf("arg[6] (content) = %#v; want the PDF bytes %#v", got, want)
 	}
 	if got, want := call.Args[7], driver.Value(int64(len(payload))); got != want {
 		t.Errorf("arg[7] (contentsize) = %#v; want %#v", got, want)
+	}
+}
+
+// TestStoreFilePdf_Transport_StoresAPdfFilename pins the corrected behaviour
+// of the defect this suite used to document ("the filename is stored exactly
+// as passed and no \".pdf\" is appended by the plugin").
+//
+// A Java StoreFilePdf row can never exist under a name that is not a ".pdf":
+// the original builds "<System.currentTimeMillis()>.pdf" itself
+// (StoreFilePdf.java:83-87) - it does NOT sniff the payload the way
+// StoreFile.java:85-97 does for its pdf/xml/x12/txt cases. This port lets the
+// caller name the file (jobqueue builds "<nano>.<ext>" from InputFormat()), so
+// the plugin carries the Java's guarantee instead of trusting the caller: a
+// name that already ends in the format's extension is stored verbatim, one
+// that does not gets it appended.
+func TestStoreFilePdf_Transport_StoresAPdfFilename(t *testing.T) {
+	tests := []struct {
+		name string
+		pass string
+		want string
+	}{
+		{"caller already named it .pdf", "1700000001.pdf", "1700000001.pdf"},
+		{"caller used upper case", "1700000001.PDF", "1700000001.PDF"},
+		{"name with no extension", "1700000001", "1700000001.pdf"},
+		{"name declaring another format", "claim-form.txt", "claim-form.txt.pdf"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := withStubQueries(t, nil, nil, nil)
+			s := &StoreFilePdf{}
+			if err := s.SetContext(ctxWithUser("alice")); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Transport(tt.pass, []byte("%PDF-1.7")); err != nil {
+				t.Fatalf("Transport(%q) = %v; want nil", tt.pass, err)
+			}
+			calls := db.execCalls()
+			if len(calls) != 1 {
+				t.Fatalf("recorded %d ExecContext calls; want 1", len(calls))
+			}
+			if got := calls[0].Args[3]; got != driver.Value(tt.want) {
+				t.Errorf("filename = %#v; want %#v", got, tt.want)
+			}
+			if got, want := calls[0].Args[2], driver.Value("output"); got != want {
+				t.Errorf("category = %#v; want %#v (the Java literal)", got, want)
+			}
+		})
 	}
 }
 
@@ -163,6 +230,15 @@ func TestStoreFilePdf_Contract_Surface(t *testing.T) {
 	s := &StoreFilePdf{}
 	if got := s.InputFormat(); got != "pdf" {
 		t.Errorf("InputFormat() = %q; want %q", got, "pdf")
+	}
+	// The stored name's extension is the plugin's declared format - this port's
+	// expression of the Java's hardcoded ".pdf" (StoreFilePdf.java:83-87).
+	if got, want := s.storedFilename("1700000001"), "1700000001."+s.InputFormat(); got != want {
+		t.Errorf("storedFilename() = %q; want %q", got, want)
+	}
+	// The category is the Java literal in both originals, not derived.
+	if fileStoreCategory != "output" {
+		t.Errorf("fileStoreCategory = %q; want %q (StoreFile.java:100, StoreFilePdf.java:87)", fileStoreCategory, "output")
 	}
 	if got := len(s.Options()); got != 0 {
 		t.Errorf("Options() = %v; want an empty list (the Java plugin has no configuration options)", got)
