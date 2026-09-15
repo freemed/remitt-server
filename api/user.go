@@ -76,8 +76,13 @@ func (a Api) UserAdd(c *echo.Context) error {
 	}
 
 	type userInput struct {
-		Username               string `json:"username"`
-		Password               string `json:"password"`
+		Username string `json:"username"`
+		Password string `json:"password"`
+		// Role is the rolename to grant in tRole. tUser has no role column, so
+		// model.AddUser writes it as a tRole row (the Java's UserManagement.addUser
+		// does the same, hardcoding 'default' because its API has no role input);
+		// an empty value becomes 'default' rather than leaving the new account
+		// with no role at all.
 		Role                   string `json:"role"`
 		ContactEmail           string `json:"contact_email"`
 		CallbackServiceUri     string `json:"callback_service_uri"`

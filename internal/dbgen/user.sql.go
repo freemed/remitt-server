@@ -11,8 +11,8 @@ import (
 )
 
 const addUser = `-- name: AddUser :execresult
-INSERT INTO tUser (username, passhash, role, contactemail, callbackserviceuri, callbackservicewsdluri, callbackusername, callbackpassword)
-VALUES (?, ?, ?, ?,
+INSERT INTO tUser (username, passhash, contactemail, callbackserviceuri, callbackservicewsdluri, callbackusername, callbackpassword)
+VALUES (?, ?, ?,
         ?, ?,
         ?, ?)
 `
@@ -20,7 +20,6 @@ VALUES (?, ?, ?, ?,
 type AddUserParams struct {
 	Username               string         `json:"username"`
 	Passhash               string         `json:"passhash"`
-	Role                   sql.NullString `json:"role"`
 	Contactemail           sql.NullString `json:"contactemail"`
 	Callbackserviceuri     sql.NullString `json:"callbackserviceuri"`
 	Callbackservicewsdluri sql.NullString `json:"callbackservicewsdluri"`
@@ -32,13 +31,28 @@ func (q *Queries) AddUser(ctx context.Context, arg AddUserParams) (sql.Result, e
 	return q.db.ExecContext(ctx, addUser,
 		arg.Username,
 		arg.Passhash,
-		arg.Role,
 		arg.Contactemail,
 		arg.Callbackserviceuri,
 		arg.Callbackservicewsdluri,
 		arg.Callbackusername,
 		arg.Callbackpassword,
 	)
+}
+
+const addUserRole = `-- name: AddUserRole :exec
+INSERT INTO tRole (username, rolename) VALUES (?, ?)
+`
+
+type AddUserRoleParams struct {
+	Username string `json:"username"`
+	Rolename string `json:"rolename"`
+}
+
+// The Java's UserManagement.addUser writes the new user's role here, as a second
+// statement after the tUser insert (INSERT INTO tRole (username, rolename)).
+func (q *Queries) AddUserRole(ctx context.Context, arg AddUserRoleParams) error {
+	_, err := q.db.ExecContext(ctx, addUserRole, arg.Username, arg.Rolename)
+	return err
 }
 
 const changePassword = `-- name: ChangePassword :exec
@@ -56,7 +70,7 @@ func (q *Queries) ChangePassword(ctx context.Context, arg ChangePasswordParams) 
 }
 
 const checkUserPassword = `-- name: CheckUserPassword :one
-SELECT id, username, passhash, contactemail, callbackserviceuri, callbackservicewsdluri, callbackusername, callbackpassword, role FROM tUser WHERE username = ? AND passhash = ?
+SELECT id, username, passhash, contactemail, callbackserviceuri, callbackservicewsdluri, callbackusername, callbackpassword FROM tUser WHERE username = ? AND passhash = ?
 `
 
 type CheckUserPasswordParams struct {
@@ -76,7 +90,6 @@ func (q *Queries) CheckUserPassword(ctx context.Context, arg CheckUserPasswordPa
 		&i.Callbackservicewsdluri,
 		&i.Callbackusername,
 		&i.Callbackpassword,
-		&i.Role,
 	)
 	return i, err
 }
@@ -110,8 +123,41 @@ func (q *Queries) GetRoles(ctx context.Context, userID int64) ([]string, error) 
 	return items, nil
 }
 
+const getRolesByName = `-- name: GetRolesByName :many
+SELECT r.rolename FROM tRole r
+WHERE r.username = ?
+ORDER BY r.rolename ASC
+`
+
+// Roles live in tRole, keyed by username: tUser has no role column (Java
+// UserManagement.SQL_GET_USER reads GROUP_CONCAT(r.rolename) from a tRole join;
+// this is the same data as a typed list, without GROUP_CONCAT's truncation at
+// group_concat_max_len and its NULL result for a user with no roles).
+func (q *Queries) GetRolesByName(ctx context.Context, username string) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, getRolesByName, username)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var rolename string
+		if err := rows.Scan(&rolename); err != nil {
+			return nil, err
+		}
+		items = append(items, rolename)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getUserById = `-- name: GetUserById :one
-SELECT id, username, passhash, contactemail, callbackserviceuri, callbackservicewsdluri, callbackusername, callbackpassword, role FROM tUser WHERE id = ?
+SELECT id, username, passhash, contactemail, callbackserviceuri, callbackservicewsdluri, callbackusername, callbackpassword FROM tUser WHERE id = ?
 `
 
 func (q *Queries) GetUserById(ctx context.Context, id int64) (Tuser, error) {
@@ -126,13 +172,12 @@ func (q *Queries) GetUserById(ctx context.Context, id int64) (Tuser, error) {
 		&i.Callbackservicewsdluri,
 		&i.Callbackusername,
 		&i.Callbackpassword,
-		&i.Role,
 	)
 	return i, err
 }
 
 const getUserByName = `-- name: GetUserByName :one
-SELECT id, username, passhash, contactemail, callbackserviceuri, callbackservicewsdluri, callbackusername, callbackpassword, role FROM tUser WHERE username = ?
+SELECT id, username, passhash, contactemail, callbackserviceuri, callbackservicewsdluri, callbackusername, callbackpassword FROM tUser WHERE username = ?
 `
 
 func (q *Queries) GetUserByName(ctx context.Context, username string) (Tuser, error) {
@@ -147,7 +192,6 @@ func (q *Queries) GetUserByName(ctx context.Context, username string) (Tuser, er
 		&i.Callbackservicewsdluri,
 		&i.Callbackusername,
 		&i.Callbackpassword,
-		&i.Role,
 	)
 	return i, err
 }

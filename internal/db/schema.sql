@@ -1,5 +1,12 @@
 -- REMITT Schema for sqlc code generation
 -- Extracted from migrations/001_legacy.up.sql
+--
+-- This file is a CONTRACT COPY of migrations/001_legacy.up.sql, the Java 0.5.x
+-- schema the server actually applies. It exists only so sqlc can type the
+-- queries in queries/; nothing here is ever executed. Column names must match
+-- the migration exactly - a column that exists here but not in the migration
+-- makes every generated statement that mentions it fail at runtime with
+-- "Unknown column". tUser.role used to be exactly that bug.
 
 CREATE TABLE tUser (
       id               BIGINT AUTO_INCREMENT PRIMARY KEY
@@ -10,7 +17,6 @@ CREATE TABLE tUser (
     , callbackservicewsdluri VARCHAR(150)
     , callbackusername      VARCHAR(50)
     , callbackpassword      VARCHAR(50)
-    , role             VARCHAR(50)
     , INDEX ( username )
 );
 
@@ -22,13 +28,11 @@ CREATE TABLE tRole (
     , FOREIGN KEY ( username ) REFERENCES tUser ( username ) ON DELETE CASCADE
 );
 
-CREATE TABLE tUserRoles (
-      id         BIGINT AUTO_INCREMENT PRIMARY KEY
-    , username   VARCHAR(50) NOT NULL
-    , rolename   VARCHAR(50) NOT NULL
-    , CONSTRAINT UNIQUE KEY ( username, rolename )
-    , FOREIGN KEY ( username ) REFERENCES tUser ( username ) ON DELETE CASCADE
-);
+-- tUserRoles does not exist in the migrated schema: migrations/001_legacy.up.sql
+-- never creates it, the Java ddl.sql never creates it (UserManagement.java reads
+-- roles from tRole by username), and the live database has no such table. It was
+-- invented by this file's first draft; removed so sqlc cannot generate a model
+-- for a table that does not exist.
 
 CREATE TABLE tUserConfig (
       user       VARCHAR(50) NOT NULL

@@ -16,8 +16,13 @@
 // email or callback credential comes back carrying both the text and the set
 // flag: they marshal as that text, a client can tell "bob@example.com" from "no
 // contact email", and a genuinely NULL column still reports itself unset.
-// TestTuserToModel. The two URI columns and Role, which go through
-// nullStringToString, still collapse NULL and "" to "".
+// TestTuserToModel. The two URI columns, which go through nullStringToString,
+// still collapse NULL and "" to "".
+//
+// Role is NOT part of that mapping: tUser has no role column (the migration's
+// tUser is migrations/001_legacy.up.sql:25-36, and dbgen.Tuser has no Role field
+// any more), so a role can only come from tRole via UserModel.attachRoles.
+// TestTuserToModel/role_never_comes_from_the_tuser_row pins that.
 package model
 
 import (
@@ -150,7 +155,6 @@ func TestTuserToModel(t *testing.T) {
 			ID:                     11,
 			Username:               "bob",
 			Passhash:               "5f4dcc3b5aa765d61d8327deb882cf99",
-			Role:                   sql.NullString{String: "admin", Valid: true},
 			Contactemail:           sql.NullString{String: "bob@example.com", Valid: true},
 			Callbackserviceuri:     sql.NullString{String: "https://cb.example.com/remitt", Valid: true},
 			Callbackservicewsdluri: sql.NullString{String: "https://cb.example.com/remitt?wsdl", Valid: true},
@@ -161,9 +165,6 @@ func TestTuserToModel(t *testing.T) {
 
 		if got.Id != 11 || got.Username != "bob" || got.PasswordHash != row.Passhash {
 			t.Errorf("identity fields = %+v", got)
-		}
-		if got.Role != "admin" {
-			t.Errorf("Role = %q, want admin (plain string, NULL and empty collapse)", got.Role)
 		}
 		if got.CallbackServiceUri != "https://cb.example.com/remitt" {
 			t.Errorf("CallbackServiceUri = %q", got.CallbackServiceUri)
@@ -224,14 +225,10 @@ func TestTuserToModel(t *testing.T) {
 		// while the NullString ones keep it as a set, empty value, which is what
 		// MarshalJSON renders as the two-character document "".
 		row := dbgen.Tuser{
-			Role:             sql.NullString{String: "", Valid: true},
 			Contactemail:     sql.NullString{String: "", Valid: true},
 			Callbackusername: sql.NullString{String: "", Valid: true},
 		}
 		got := tuserToModel(row)
-		if got.Role != "" {
-			t.Errorf("Role = %q", got.Role)
-		}
 		for name, ns := range map[string]NullString{
 			"ContactEmail":     got.ContactEmail,
 			"CallbackUsername": got.CallbackUsername,
@@ -255,6 +252,26 @@ func TestTuserToModel(t *testing.T) {
 		row := dbgen.Tuser{Passhash: "5f4dcc3b5aa765d61d8327deb882cf99"}
 		if got := tuserToModel(row).PasswordHash; got != row.Passhash {
 			t.Errorf("PasswordHash = %q, want %q", got, row.Passhash)
+		}
+	})
+
+	t.Run("role_never_comes_from_the_tuser_row", func(t *testing.T) {
+		// The schema the server applies has no role column on tUser
+		// (migrations/001_legacy.up.sql:25-36), so dbgen.Tuser has no Role field
+		// to read and a mapped row must never carry a role. The role comes from
+		// tRole instead (UserModel.attachRoles -> dbgen.GetRolesByName), which is
+		// what the Java's UserManagement does with GROUP_CONCAT over a tRole
+		// join. This test is the compile-time half of that: the row type has no
+		// such field, so a Role populated from a user row is unrepresentable.
+		got := tuserToModel(dbgen.Tuser{ID: 1, Username: "Administrator"})
+		if got.Role != "" {
+			t.Errorf("Role = %q, want the empty string: tUser has no role column", got.Role)
+		}
+		// ... and the field still exists for the API's role input to land in and
+		// for attachRoles to fill (api/user.go UserAdd, model/user.go AddUser).
+		u := UserModel{Role: "default"}
+		if u.Role != "default" {
+			t.Errorf("Role is not settable: %+v", u)
 		}
 	})
 }

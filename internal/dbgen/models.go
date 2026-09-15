@@ -144,7 +144,6 @@ type Tuser struct {
 	Callbackservicewsdluri sql.NullString `json:"callbackservicewsdluri"`
 	Callbackusername       sql.NullString `json:"callbackusername"`
 	Callbackpassword       sql.NullString `json:"callbackpassword"`
-	Role                   sql.NullString `json:"role"`
 }
 
 type Tuserconfig struct {
@@ -152,10 +151,4 @@ type Tuserconfig struct {
 	Cnamespace string         `json:"cnamespace"`
 	Coption    string         `json:"coption"`
 	Cvalue     sql.NullString `json:"cvalue"`
-}
-
-type Tuserrole struct {
-	ID       int64  `json:"id"`
-	Username string `json:"username"`
-	Rolename string `json:"rolename"`
 }

@@ -10,7 +10,7 @@ import (
 )
 
 const callUserConfigUpdate = `-- name: CallUserConfigUpdate :exec
-CALL pUserConfigUpdate(?, ?, ?, ?)
+CALL p_UserConfigUpdate(?, ?, ?, ?)
 `
 
 type CallUserConfigUpdateParams struct {
@@ -20,6 +20,11 @@ type CallUserConfigUpdateParams struct {
 	Value      interface{} `json:"value"`
 }
 
+// The migrated procedure is p_UserConfigUpdate (migrations/001_legacy.up.sql:74,
+// confirmed by SHOW PROCEDURE STATUS). The name here lost its underscore, so
+// every config write failed with
+//
+//	Error 1305 (42000): PROCEDURE remitt.pUserConfigUpdate does not exist
 func (q *Queries) CallUserConfigUpdate(ctx context.Context, arg CallUserConfigUpdateParams) error {
 	_, err := q.db.ExecContext(ctx, callUserConfigUpdate,
 		arg.User,

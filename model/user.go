@@ -12,11 +12,19 @@ import (
 )
 
 type UserModel struct {
-	Id                     int64      `db:"id"`
-	Username               string     `db:"username"`
-	PasswordHash           string     `db:"passhash"`
-	Role                   string     `db:"role"`
-	ContactEmail           NullString `db:"contactemail"`
+	Id           int64  `db:"id"`
+	Username     string `db:"username"`
+	PasswordHash string `db:"passhash"`
+	// Role is the user's PRIMARY role name, read from tRole - tUser has no role
+	// column (migrations/001_legacy.up.sql:25-36; the Java's UserManagement reads
+	// roles from tRole by username). It is therefore only populated by the
+	// lookups that can reach tRole (GetUserByName/GetUserById/GetById); a
+	// UserModel built by hand carries whatever the caller set. The complete list
+	// is available through UserModel.GetRoles, which is what the ACL middleware
+	// (cmd/remitt-server/auth.go) uses; use that for authorization, not this.
+	Role         string     `db:"role"`
+	ContactEmail NullString `db:"contactemail"`
+
 	CallbackServiceUri     string     `db:"callbackserviceuri"`
 	CallbackServiceWsdlUri string     `db:"callbackservicewsdluri"`
 	CallbackUsername       NullString `db:"callbackusername"`
@@ -28,17 +36,49 @@ func (u *UserModel) UniqueId() any {
 }
 
 // tuserToModel maps a dbgen.Tuser to a model.UserModel.
+//
+// Role is deliberately not part of this mapping: tUser has no role column -
+// roles live in tRole (Java UserManagement.SQL_GET_USER joins tRole on username)
+// - so a Tuser row has no role to copy. Callers that need it go through
+// attachRoles, which reads tRole.
 func tuserToModel(tu dbgen.Tuser) UserModel {
 	return UserModel{
 		Id:                     tu.ID,
 		Username:               tu.Username,
 		PasswordHash:           tu.Passhash,
-		Role:                   nullStringToString(tu.Role),
 		ContactEmail:           nullStringFromSQL(tu.Contactemail),
 		CallbackServiceUri:     nullStringToString(tu.Callbackserviceuri),
 		CallbackServiceWsdlUri: nullStringToString(tu.Callbackservicewsdluri),
 		CallbackUsername:       nullStringFromSQL(tu.Callbackusername),
 		CallbackPassword:       nullStringFromSQL(tu.Callbackpassword),
+	}
+}
+
+// attachRoles fills in the primary role from tRole.
+//
+// The role belongs to tRole (username, rolename), not to tUser, which is why
+// this is a second lookup rather than a column of the row: the Java's
+// UserManagement.getUser does the same thing in one statement with
+// GROUP_CONCAT(r.rolename) over a tRole join, and UserDTO carries a roles LIST,
+// not a role. GetRolesByName is that join as a typed list - it cannot be
+// truncated by group_concat_max_len and returns nothing (rather than NULL) for a
+// user with no roles.
+//
+// A failure is logged and leaves Role empty instead of failing the lookup: the
+// user row is what callers need, roles are decoration for this field, and the
+// Java swallows its SQL exceptions here too (UserManagement.getUser catches
+// Throwable and returns the partially populated UserDTO).
+func (u *UserModel) attachRoles() {
+	roles, err := Queries.GetRolesByName(context.Background(), u.Username)
+	if err != nil {
+		log.Printf("attachRoles(%s): %v", u.Username, err)
+		return
+	}
+	if len(roles) > 0 {
+		// The Java has no single role to copy, so the ordering has to be chosen:
+		// tRole's name order is deterministic, and the ACL checks specific names
+		// (api/aclRequireRole) rather than this field. Administrator -> "admin".
+		u.Role = roles[0]
 	}
 }
 
@@ -62,7 +102,9 @@ func GetUserByName(username string) (UserModel, error) {
 	if err != nil {
 		return UserModel{}, err
 	}
-	return tuserToModel(tu), nil
+	u := tuserToModel(tu)
+	u.attachRoles()
+	return u, nil
 }
 
 func GetUserById(userId string) (UserModel, error) {
@@ -74,7 +116,9 @@ func GetUserById(userId string) (UserModel, error) {
 	if err != nil {
 		return UserModel{}, err
 	}
-	return tuserToModel(tu), nil
+	u := tuserToModel(tu)
+	u.attachRoles()
+	return u, nil
 }
 
 // GetById will populate a user object from a database model with
@@ -101,9 +145,12 @@ func (u *UserModel) GetById(id any) error {
 		return err
 	}
 	*u = tuserToModel(tu)
+	u.attachRoles()
 	return nil
 }
 
+// GetRoles returns every role the user holds, read from tRole by the user's id.
+// This is the authoritative list: UserModel.Role is only the primary name.
 func (u UserModel) GetRoles() ([]string, error) {
 	r, err := Queries.GetRoles(context.Background(), u.Id)
 	if err != nil {
@@ -134,12 +181,19 @@ func CheckUserPassword(username, userpassword string) (int64, bool) {
 
 // AddUser inserts a new user into the database with MD5-hashed password.
 // Returns the new user's ID.
+//
+// The role is NOT a tUser column: it is persisted as a tRole row, exactly as the
+// Java's UserManagement.addUser does (INSERT INTO tUser ..., then a second
+// statement INSERT INTO tRole (username, rolename)). Java hardcodes 'default'
+// there because its API takes no role at all; the Go API's role input
+// (api/user.go UserAdd) is honoured instead, and an empty one falls back to
+// 'default' so a user is never created with no role at all - which is what the
+// old code did, since it wrote the value into a column the schema does not have.
 func AddUser(u UserModel) (int64, error) {
 	u.PasswordHash = common.Md5hash(u.PasswordHash)
 	params := dbgen.AddUserParams{
 		Username:               u.Username,
 		Passhash:               u.PasswordHash,
-		Role:                   stringToNullString(u.Role),
 		Contactemail:           nullStringToSQL(u.ContactEmail),
 		Callbackserviceuri:     stringToNullString(u.CallbackServiceUri),
 		Callbackservicewsdluri: stringToNullString(u.CallbackServiceWsdlUri),
@@ -151,5 +205,18 @@ func AddUser(u UserModel) (int64, error) {
 		return 0, fmt.Errorf("adduser: %w", err)
 	}
 	id, _ := result.LastInsertId()
+
+	role := u.Role
+	if role == "" {
+		role = "default"
+	}
+	if err := Queries.AddUserRole(context.Background(), dbgen.AddUserRoleParams{
+		Username: u.Username,
+		Rolename: role,
+	}); err != nil {
+		// The tUser row is already inserted, so the id is returned alongside the
+		// error: the account exists but carries no role.
+		return id, fmt.Errorf("adduser: role %q: %w", role, err)
+	}
 	return id, nil
 }
