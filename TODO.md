@@ -84,18 +84,15 @@ All 20 endpoints are also reachable through the SOAP 1.1 compatibility layer
 
 ## REMAINING (verified broken or missing as of 2026-09-15)
 
-- [ ] **In-process XSLT engine is not equivalent to `xsltproc` yet**, but the gap is
-      now serialization, not content. `common/xsl_micro_test.go` passes **14/14**
-      (was 7/14; `xpath v1.3.11` + `ratago 81df787` fixed node-set variables and
-      EXSLT `set:distinct`). For the four shipped stylesheets, after stripping
-      whitespace adjacent to tag boundaries the outputs are 11,135 vs 11,135 bytes
-      (4010_837p), 11,344 vs 11,335 (5010_837p), 6,743 vs 6,752 (cms1500) and
-      1,438 vs 1,436 (statement) — i.e. near-identical. `xsltproc` is still REQUIRED
-      because of two serialization defects being fixed: ratago emits a **raw CR**
-      where xsltproc writes `&#13;` (a conformant parser normalizes the raw CR away,
-      so the X12 CRLF terminator degrades to LF), and it indents **inside text
-      nodes**, which `FixedFormXml` consumes verbatim
-      (`translation/fixedformxml.go:109`).
+- [X] **In-process XSLT engine now matches `xsltproc` byte-for-byte.** All four
+      shipped stylesheets transform to identical bytes (15,287 / 15,607 / 9,698 /
+      2,048) and produce identical bytes on every run — verified with every engine
+      module resolved from the module cache, five consecutive fresh-process runs,
+      and confirmed green in CI. `common/xsl_micro_test.go` is 14/14 and
+      `TestXslTransform_Compare` passes 4/4. `xsltproc` is therefore no longer
+      strictly required; retiring it (flip `InternalXslt` to true, drop `libxslt`
+      from the image) is a deployment decision, not an engine gap. See the
+      REMAINING list below for what is still open.
 - [ ] **`/metrics` requires credentials.** In echo v5 `e.Use(...)` builds one global
       chain, so registering `e.GET("/metrics", ...)` before the BasicAuth group does
       **not** exempt it — measured: unauthenticated `GET /metrics` returns 401 in all
@@ -115,10 +112,10 @@ All 20 endpoints are also reachable through the SOAP 1.1 compatibility layer
       `ResponseDataType=Xml`) with HTTP Basic auth and no PGP. Decision pending.
 - [ ] **Medicare HETS eligibility** returns a canned X12 271 success without any HTTP
       call (it needs CMS credentials). Decision pending.
-- [ ] **CI does not test the sub-modules.** `.github/workflows/go.yml` runs
-      `go test -v ./...` from the root, which in workspace mode covers only
-      root-module packages, so `api`, `client`, `common`, `config`, `jobqueue`,
-      `model`, `model/user`, `render`, `translation` and `transport` are never tested.
+- [X] **CI does not test the sub-modules** — fixed.
+      `.github/workflows/go.yml` now runs each of the ten sub-modules explicitly
+      after the root-module tests. It was only safe to do once `common` went
+      green; the run on `8b4558b` passed (actions/runs/35001572893).
 - [ ] **Test coverage still missing** for `client`, `model`, `model/user`,
       `scooper`, and 6 of the 7 transport plugins. (`validation`, `middleware`,
       `task` and `crypto` gained suites on 2026-09-15.)

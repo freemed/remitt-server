@@ -78,18 +78,28 @@ The Go `EligibilityStatus`/`EligibilitySuccessCode` values were also incomplete
 (1 of 5 statuses, 2 of 8 success codes defined) until 2026-09-15, which is why a
 plugin could not have reported what real payers return.
 
-### Render Plugins: 2 present, 1 nearly equivalent in-process
-PreRenderedPlugin works. XsltPlugin is correct when it shells out to `xsltproc`
-(the default: `config.Config.InternalXslt` defaults to **false**). The in-process
-engine improved from 7/14 to **14/14** on `common/xsl_micro_test.go` on
-2026-09-15 (`xpath v1.3.11` + `ratago 81df787`: node-set variables and the EXSLT
-set functions), and on the four shipped stylesheets the outputs are now
-near-identical once whitespace adjacent to tag boundaries is normalized
-(11,135 vs 11,135 / 11,344 vs 11,335 / 6,743 vs 6,752 / 1,438 vs 1,436).
-`xsltproc` is still REQUIRED because two serialization defects remain: a raw CR
-where libxslt writes `&#13;` (which would lose the X12 CRLF terminator on
-re-parse) and indentation inserted inside text nodes (which FixedFormXml
-consumes verbatim).
+### Render Plugins: 2 of 2, and the in-process engine is now equivalent
+`PreRenderedPlugin` works. `XsltPlugin` is correct on both paths as of
+2026-09-15: the in-process engine (ratago + the forked xpath, with gokogiri's
+libxslt-compatible serializer) transforms all four shipped stylesheets to output
+**byte-identical to `xsltproc`** — 15,287 / 15,607 / 9,698 / 2,048 bytes — and
+does so deterministically across runs. The per-construct regression net
+(`common/xsl_micro_test.go`) is 14/14 and the four-stylesheet comparison
+(`TestXslTransform_Compare`) passes 4/4, in CI as well as locally.
+
+Getting there fixed, in order: node-set variable resolution and iteration, the
+EXSLT set functions (`set:distinct` by string-value on live DOM nodes),
+carriage-return escaping and text-node indentation in serialization, XPath 1.0
+`number()` semantics in `format-number`, context position for
+`position()`/`last()`, and — the defect that had been masquerading as a content
+difference — global variables being evaluated in map order, so a global whose
+dependency had not been evaluated yet silently resolved to an empty node-set and
+the wrong value was frozen forever. That last one made output non-deterministic
+run to run.
+
+`InternalXslt` still defaults to **false**, so production continues to use the
+`xsltproc` binary; dropping it is now a deployment decision rather than a
+correctness prerequisite.
 
 ### Validation Plugins: 1 of 1 DONE, and it no longer lies
 X12Validator (otto JS engine; scripts in resources/scripts/validation/). Until
