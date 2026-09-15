@@ -249,14 +249,38 @@ never grew:**
 3. **The translator gets `[]byte` where `x12xml` wants `model.X12Xml`**
    (`invalid datatype presented`). Java had one entry point taking bytes
    (`PluginInterface.java:41`) and each plugin parsed them itself.
-4. **`tFileStore` writes violate the foreign key**: `storefile`/`storefilepdf`
-   hardcode `PayloadID: 0` → error 1452. DISPATCHED.
+4. **`tFileStore` writes violate BOTH foreign keys** — FIXED (`06357c9`). The
+   storefiles hardcoded `PayloadID: 0`/`ProcessorID: 0` while `tFileStore` has two
+   not-null FKs (`payloadId → tPayload(id)`, `processorId → tProcessor(id)`), so
+   every write failed with 1452 — and the payload id alone is not enough. The
+   identity now travels in the context (`common.JobIdentity{PayloadID, ProcessorID,
+   JobID}` / `NewJobContext` / `JobIdentityFromContext`) and a missing one is a
+   clear error rather than an invalid row. **Still to wire:** `executeJob` builds
+   its context at `jobqueue.go:308` without it, so the storefiles fail loudly until
+   the feeder attaches it.
+
+Also fixed from the same run: the sqlc layer now matches the migrated schema
+(`f646af5` — the invented `tUser.role` plus `tUserRoles`, and the `pUserConfigUpdate`
+name missing its underscore, which made config saves 500 from both interfaces), the
+translation registry answers to the FQCNs the database stores (`06357c9`), and the
+eligibility registry's seeded `org.remitt.plugin.eligibility.DummyEligibility`
+resolves (`0221199`).
+
+**New blocker found by the FQCN audit, NOT yet fixed** — it is the second half of
+blocker 2: `tTranslation.outputFormat` is the *consuming transport's* declared input
+format (`p_ResolveTranslationPlugin` compares it with `transportPluginInputFormat`),
+and the seed says `x12xml → 'text'` while every Go transport declares `x12`/`pdf`/`*`
+(pinned in `transport/map_test.go`). So `Resolver("x12xml", "text")` is false even
+though the registry now resolves the names: the formats the Go port declares and the
+formats the database's functions compare have to be reconciled before a translator
+can resolve.
 
 Also verified, for the record: `tTranslation` and `tPluginOptions` store plugin
-names as Java FQCNs while the translation registry answers only to short names, so
-`InstantiateTranslator('org.remitt.plugin.translation.X12Xml')` fails (DISPATCHED);
-and the two seeded `ScriptedHttpTransport` rows in `tUserConfig` are dead data -
-they are not options that plugin declares (`transport/script.go:156`).
+names as Java FQCNs while the translation registry answered only to short names, so
+`InstantiateTranslator('org.remitt.plugin.translation.X12Xml')` failed — fixed, with
+the alias behavior pinned by a test; and the two seeded `ScriptedHttpTransport` rows
+in `tUserConfig` are dead data — they are not options that plugin declares
+(`transport/script.go:156`).
 
 ### FIXED 2026-09-15: the database bootstrap could not migrate
 
