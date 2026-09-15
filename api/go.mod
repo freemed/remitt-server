@@ -6,11 +6,13 @@ replace (
 	github.com/freemed/remitt-server => ../
 	github.com/freemed/remitt-server/common => ../common
 	github.com/freemed/remitt-server/config => ../config
+	github.com/freemed/remitt-server/jobqueue => ../jobqueue
 	github.com/freemed/remitt-server/model => ../model
 )
 
 require (
 	github.com/freemed/remitt-server/common v0.0.0-20260409181504-5105c68ef4de
+	github.com/freemed/remitt-server/jobqueue v0.0.0-20260409181504-5105c68ef4de
 	github.com/freemed/remitt-server/model v0.0.0-20260409181504-5105c68ef4de
 	github.com/labstack/echo/v5 v5.1.1
 )

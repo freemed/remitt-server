@@ -66,7 +66,18 @@ type JobQueueItem struct {
 	TransportPlugin string
 	TransportOption string
 	OriginalID      string
-	lock            *sync.RWMutex
+
+	// PayloadID and ProcessorID are the job's DATABASE identity: tPayload.id
+	// and the tProcessor.id the job was journaled under (the Java plugin
+	// interface called that the jobId). They are set by the enqueue path
+	// (enqueue.go) and travel with the item so executeJob can attach them to
+	// the work context - tFileStore has a NOT NULL foreign key to each, so a
+	// transport that persists its output cannot write a row without them
+	// (common/jobcontext.go). JobID is w.ID.
+	PayloadID   int64
+	ProcessorID int64
+
+	lock *sync.RWMutex
 }
 
 func (o *JobQueueItem) ReadLock() {
@@ -109,7 +120,12 @@ func (o *JobQueueItem) appendLogLocked(item string) {
 	// Additionally set message to "last log item" automatically without timestamp
 	o.Message = item
 
-	// Journal updates to database (sqlc migration pending)
+	// No database write here: this is called for every line, from inside the
+	// job's own lock, and the previous "Journal update (sqlc migration pending)"
+	// comment left the impression that something was persisted. The journal is
+	// written at the two points that mean something in the database: the worker
+	// stamping tProcessor.threadId when it takes the job (journalThread) and
+	// the terminal state in Finish/Fail (journalTerminal).
 }
 
 func (o *JobQueueItem) IsCancelled() bool {
@@ -127,6 +143,7 @@ func (o *JobQueueItem) Finish() {
 	o.lock.Lock()
 	o.Status = jobStatusMap[JobStatusSuccess]
 	o.Completed = model.NullTimeNow()
+	o.journalTerminal(payloadStateCompleted)
 	o.lock.Unlock()
 }
 
@@ -137,6 +154,7 @@ func (o *JobQueueItem) Fail(err error) {
 	o.Completed = model.NullTimeNow()
 	o.appendLogLocked(err.Error())
 	o.Message = err.Error()
+	o.journalTerminal(payloadStateFailed)
 }
 
 func (o *JobQueueItem) Render() (out []byte, err error) {
@@ -230,7 +248,10 @@ func (w Worker) Start() {
 				i.Lock()
 				i.Status = jobStatusMap[JobStatusRunning]
 				i.Started = model.NullTimeNow()
-				// Journal update (sqlc migration pending)
+				// Journal which worker took the job, on the tProcessor row the
+				// enqueue path already wrote. The worker's ID is what the Java
+				// stored in tProcessor.threadId (ControlThread.java:230-272).
+				i.journalThread(w.ID)
 				i.Unlock()
 
 				// Actually process queue item
@@ -259,8 +280,26 @@ func (w Worker) Stop() {
 	}()
 }
 
+// usableWorkerCount clamps a configured worker count to something the dispatcher
+// can actually run. A non-positive count used to start NO workers at all: the
+// dispatcher still read jobQueueChannel, then blocked forever on
+// `worker := <-WorkerQueue` waiting for a worker that could never exist, so every
+// payload was accepted, journaled into tProcessor, and never processed, with
+// nothing logged as an error (observed 2026-09-15: a payload sat at 'valid' with
+// threadId 0 for as long as the process lived).
+func usableWorkerCount(n int) int {
+	if n < 1 {
+		log.Printf("StartDispatcher(): worker count %d is not usable; starting 1 worker "+
+			"(set timing-iterations.worker-threads to choose the pool size)", n)
+		return 1
+	}
+	return n
+}
+
 // StartDispatcher initializes the jobqueue dispatcher with nworker workers
 func StartDispatcher(nworkers int) {
+	nworkers = usableWorkerCount(nworkers)
+
 	// First, initialize the channel we are going to but the workers' work channels into.
 	WorkerQueue = make(chan chan JobQueueItem, nworkers)
 
@@ -269,6 +308,20 @@ func StartDispatcher(nworkers int) {
 		log.Printf("StartDispatcher(): Starting worker %d", i+1)
 		worker := NewWorker(i+1, WorkerQueue)
 		worker.Start()
+	}
+
+	// Start the poller alongside the workers: it is the safety net for payloads
+	// the on-insert trigger never saw (another process wrote the row, the
+	// insert path failed to enqueue, or the row was waiting across a restart).
+	// Enqueue-on-insert and the poller are the two triggers this pipeline is
+	// supposed to have, and both converge on EnqueuePayload.
+	if PollEnabled() {
+		log.Printf("StartDispatcher(): starting the payload poller (queue.poll-interval-ms=%d, %s)",
+			pollIntervalMillis(), PollInterval())
+		StartPoller(context.Background())
+	} else {
+		log.Print("StartDispatcher(): the payload poller is DISABLED (queue.poll-enabled=false): " +
+			"only payloads inserted through the API will be processed")
 	}
 
 	go func() {
@@ -306,6 +359,15 @@ func executeJob(w *JobQueueItem) (err error) {
 		return fmt.Errorf("executejob: getuserbyname: %w", err)
 	}
 	ctx := user.NewContext(context.Background(), &u)
+
+	// Attach the job's database identity (tPayload.id and the tProcessor.id it
+	// was journaled under). Everything downstream - the transports that
+	// persist their output, the translators, the callbacks - is handed THIS
+	// context, and tFileStore's two NOT NULL foreign keys can only be
+	// satisfied from it. A job enqueued with no identity (a hand-built item)
+	// carries zeroes, which the consumers report as a miss rather than writing
+	// an invalid row.
+	ctx = attachJobIdentity(ctx, w)
 
 	// Fire callback asynchronously on completion (success or failure).
 	// Non-blocking goroutine so job processing is never delayed.
@@ -396,10 +458,18 @@ func fireCallback(u *model.UserModel, w *JobQueueItem, jobErr error) {
 		message = jobErr.Error()
 	}
 
-	// Parse OriginalID as PayloadID if numeric
-	var payloadID int64
-	if id, err := strconv.ParseInt(w.OriginalID, 10, 64); err == nil {
-		payloadID = id
+	// The payload the job ran for. An enqueued job carries it directly
+	// (JobQueueItem.PayloadID, set from the tPayload row); OriginalID is only a
+	// fallback, for the callers that put the payload id there as a string
+	// because nothing else carried it. Parsing OriginalID alone reported
+	// PayloadID 0 for every queued job whose originalId is not a number (the
+	// live runs' "e2e-orphan-..." rows, for instance), even though the queue
+	// knew the payload id.
+	payloadID := w.PayloadID
+	if payloadID == 0 {
+		if id, err := strconv.ParseInt(w.OriginalID, 10, 64); err == nil {
+			payloadID = id
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

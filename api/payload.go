@@ -9,6 +9,7 @@ import (
 
 	"github.com/freemed/remitt-server/common"
 	"github.com/freemed/remitt-server/internal/dbgen"
+	"github.com/freemed/remitt-server/jobqueue"
 	"github.com/freemed/remitt-server/model"
 	"github.com/labstack/echo/v5"
 )
@@ -77,6 +78,23 @@ func (a Api) PayloadInsert(c *echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
 	id, _ := result.LastInsertId()
+
+	// Trigger 1 of 2: the row we just stored enters the queue immediately, so a
+	// submission is picked up by a worker without waiting for the poller's next
+	// pass. Everything a job needs - the item registered in the queue, the
+	// tProcessor journal row that keeps it from being polled twice, and the
+	// payload/processor identity the storefile transports need for
+	// tFileStore's foreign keys - is done by jobqueue.EnqueuePayload, which is
+	// also what the poller calls.
+	//
+	// A failure here is NOT reported as a failed insert: the payload row exists
+	// and is 'valid', so the poller (jobqueue/poller.go) is the safety net that
+	// picks it up on its next pass. That is why the client still gets the id -
+	// the row it asked to store is stored.
+	if _, err := jobqueue.EnqueuePayload(context.Background(), id); err != nil {
+		log.Printf(tag+"payload %d stored but not enqueued: %s (the queue poller retries it)", id, err.Error())
+	}
+
 	return c.JSON(http.StatusOK, id)
 }
 

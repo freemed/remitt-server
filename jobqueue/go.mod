@@ -15,6 +15,7 @@ replace (
 )
 
 require (
+	github.com/freemed/remitt-server v0.0.0-20260409181504-5105c68ef4de
 	github.com/freemed/remitt-server/common v0.0.0-20260409181504-5105c68ef4de
 	github.com/freemed/remitt-server/config v0.0.0-20260409181504-5105c68ef4de
 	github.com/freemed/remitt-server/model v0.0.0-20260409181504-5105c68ef4de

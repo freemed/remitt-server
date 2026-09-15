@@ -44,6 +44,23 @@ type AppConfig struct {
 	TimingIterations struct {
 		NumWorkerThreads int `yaml:"worker-threads"`
 	} `yaml:"timing-iterations"`
+	// Queue configures how work reaches the worker pool
+	// (jobqueue/jobqueue.go). Two triggers feed it: an insert enqueues the row
+	// it just stored, and this poller is the safety net for rows inserted by
+	// any other path and for work that was waiting across a restart.
+	Queue struct {
+		// PollEnabled turns the safety-net poller on or off. It is true by
+		// default, like the Java original, whose ControlThread always polled
+		// (ControlThread.java:77-100) - a deployment has to opt out
+		// deliberately, and with the poller off only the on-insert trigger
+		// runs, so rows written by another path are never picked up.
+		PollEnabled bool `yaml:"poll-enabled"`
+		// PollIntervalMs is how long the poller waits between passes over
+		// tPayload. The Java's SLEEP_TIME default was 500 ms
+		// (ControlThread.java:69, `protected int SLEEP_TIME = 500;`), which is
+		// what this defaults to; a value <= 0 falls back to that default.
+		PollIntervalMs int `yaml:"poll-interval-ms"`
+	} `yaml:"queue"`
 	// SftpInsecureIgnoreHostKey is the explicit opt-in to skipping SSH host
 	// key verification for the SFTP transports and scoopers. It exists for
 	// first contact (capturing a host key into paths.known-hosts) and for
@@ -66,6 +83,19 @@ func (c *AppConfig) SetDefaults() {
 	c.Paths.BasePath = "."
 	c.Paths.DbMigrationsPath = "migrations"
 	c.Paths.TemporaryPath = "/tmp"
+	// Worker threads: with NO default, a configuration that omits
+	// timing-iterations started StartDispatcher(0) - zero workers, so the
+	// dispatcher accepted work and blocked forever waiting for a free worker
+	// while nothing was ever processed and no error was logged. Measured on
+	// 2026-09-15 with a payload stuck at 'valid' and a tProcessor row with
+	// threadId 0. The sample remitt.yml uses 16; 4 is a working default.
+	c.TimingIterations.NumWorkerThreads = 4
+
+	// The queue's safety-net poller: on, every 500 ms - the Java original's
+	// SLEEP_TIME (ControlThread.java:69) and the interval its run() loop used
+	// to look for unassigned payloads (see jobqueue/poller.go).
+	c.Queue.PollEnabled = true
+	c.Queue.PollIntervalMs = 500
 	// The in-process XSLT engine (ratago + the forked xpath) is the default: it
 	// matches xsltproc byte-for-byte on the shipped stylesheets and needs no
 	// external process. Set `internal-xslt: false` to use the xsltproc binary

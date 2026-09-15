@@ -10,6 +10,18 @@ import (
 	"database/sql"
 )
 
+// The job is over, successfully or not: ControlThread.commitPayloadRun and
+// setFailedPayloadRun stamp the stage's tsEnd (ControlThread.java:276-300 and
+// :316-345).
+const finishProcessor = `-- name: FinishProcessor :exec
+UPDATE tProcessor SET tsEnd = NOW() WHERE id = ?
+`
+
+func (q *Queries) FinishProcessor(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, finishProcessor, id)
+	return err
+}
+
 const getPayloadById = `-- name: GetPayloadById :one
 SELECT id, insert_stamp, user, payload, originalid, renderplugin, renderoption, transportplugin, transportoption, payloadstate FROM tPayload WHERE id = ?
 `
@@ -30,6 +42,42 @@ func (q *Queries) GetPayloadById(ctx context.Context, id int64) (Tpayload, error
 		&i.Payloadstate,
 	)
 	return i, err
+}
+
+// The Java original's getUnassignedPayloads query, verbatim
+// (../remitt/src/main/java/org/remitt/server/ControlThread.java:563-567): every
+// payload the database still calls 'valid' which no tProcessor row has claimed
+// yet, oldest first. The NOT IN is why journaling the tProcessor row at enqueue
+// time is what stops the same payload from being polled twice, and the
+// payloadState filter is why a failed payload is not retried forever.
+const getUnassignedPayloadIds = `-- name: GetUnassignedPayloadIds :many
+SELECT a.id AS id FROM tPayload AS a
+WHERE a.id NOT IN (SELECT b.payloadId FROM tProcessor AS b)
+  AND a.payloadState = 'valid'
+ORDER BY a.insert_stamp
+`
+
+func (q *Queries) GetUnassignedPayloadIds(ctx context.Context) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, getUnassignedPayloadIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const insertPayload = `-- name: InsertPayload :execresult
@@ -60,6 +108,36 @@ func (q *Queries) InsertPayload(ctx context.Context, arg InsertPayloadParams) (s
 	)
 }
 
+// The queue's journal row, equivalent to ControlThread.migratePayloadToProcessor
+// (ControlThread.java:230-272), which inserted threadId, payloadId, stage,
+// plugin, tsStart and pInput before handing the payload to a stage thread.
+// threadId starts at 0 because this port has no free-thread bookkeeping to
+// consult at enqueue time (Java's getNextAvailableThread); the worker that
+// picks the job up writes its own id into the row (SetProcessorThreadId).
+// stage is the Java's remitt.control.initialStep, RENDER.
+const insertProcessor = `-- name: InsertProcessor :execresult
+INSERT INTO tProcessor (threadId, payloadId, stage, plugin, tsStart, pInput)
+VALUES (?, ?, ?, ?, NOW(), ?)
+`
+
+type InsertProcessorParams struct {
+	ThreadID  uint32         `json:"thread_id"`
+	PayloadID uint64         `json:"payload_id"`
+	Stage     sql.NullString `json:"stage"`
+	Plugin    string         `json:"plugin"`
+	PInput    sql.NullString `json:"p_input"`
+}
+
+func (q *Queries) InsertProcessor(ctx context.Context, arg InsertProcessorParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, insertProcessor,
+		arg.ThreadID,
+		arg.PayloadID,
+		arg.Stage,
+		arg.Plugin,
+		arg.PInput,
+	)
+}
+
 const resubmitPayload = `-- name: ResubmitPayload :execresult
 INSERT INTO tPayload (user, payload, renderPlugin, renderOption, transportPlugin, transportOption, originalId)
 SELECT tPayload.user, tPayload.payload, tPayload.renderPlugin, tPayload.renderOption, tPayload.transportPlugin, tPayload.transportOption, tPayload.originalId
@@ -73,4 +151,38 @@ type ResubmitPayloadParams struct {
 
 func (q *Queries) ResubmitPayload(ctx context.Context, arg ResubmitPayloadParams) (sql.Result, error) {
 	return q.db.ExecContext(ctx, resubmitPayload, arg.ID, arg.User)
+}
+
+// Move tPayload.payloadState to its terminal value: 'completed' when the job
+// delivered, 'failed' when it did not (ControlThread.setCompletedPayload and
+// setFailedPayload, ControlThread.java:326-366). 'valid' plus a tProcessor row
+// is what the poll query looks for, so a payload that reached a terminal state
+// is deliberately never picked up again.
+const setPayloadState = `-- name: SetPayloadState :exec
+UPDATE tPayload SET payloadState = ? WHERE id = ?
+`
+
+type SetPayloadStateParams struct {
+	PayloadState sql.NullString `json:"payload_state"`
+	ID           int64          `json:"id"`
+}
+
+func (q *Queries) SetPayloadState(ctx context.Context, arg SetPayloadStateParams) error {
+	_, err := q.db.ExecContext(ctx, setPayloadState, arg.PayloadState, arg.ID)
+	return err
+}
+
+// The worker records which worker is running the job.
+const setProcessorThreadId = `-- name: SetProcessorThreadId :exec
+UPDATE tProcessor SET threadId = ? WHERE id = ?
+`
+
+type SetProcessorThreadIdParams struct {
+	ThreadID uint32 `json:"thread_id"`
+	ID       int64  `json:"id"`
+}
+
+func (q *Queries) SetProcessorThreadId(ctx context.Context, arg SetProcessorThreadIdParams) error {
+	_, err := q.db.ExecContext(ctx, setProcessorThreadId, arg.ThreadID, arg.ID)
+	return err
 }
