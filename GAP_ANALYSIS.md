@@ -78,16 +78,28 @@ The Go `EligibilityStatus`/`EligibilitySuccessCode` values were also incomplete
 (1 of 5 statuses, 2 of 8 success codes defined) until 2026-09-15, which is why a
 plugin could not have reported what real payers return.
 
-### Render Plugins: 2 present, 1 effectively unusable in-process
-PreRenderedPlugin works. XsltPlugin is correct only when `InternalXslt` is false
-and it shells out to `xsltproc`: the in-process engine produces
-6,425 / 6,396 / 34 / 34 bytes where xsltproc produces 15,287 / 15,607 / 9,698 /
-2,048 for the four shipped stylesheets. `xsltproc` is REQUIRED in production
-today; `common/xsl_micro_test.go` pins the 7 broken constructs and
-`TestXslTransform_Compare` fails 4/4.
+### Render Plugins: 2 present, 1 nearly equivalent in-process
+PreRenderedPlugin works. XsltPlugin is correct when it shells out to `xsltproc`
+(the default: `config.Config.InternalXslt` defaults to **false**). The in-process
+engine improved from 7/14 to **14/14** on `common/xsl_micro_test.go` on
+2026-09-15 (`xpath v1.3.11` + `ratago 81df787`: node-set variables and the EXSLT
+set functions), and on the four shipped stylesheets the outputs are now
+near-identical once whitespace adjacent to tag boundaries is normalized
+(11,135 vs 11,135 / 11,344 vs 11,335 / 6,743 vs 6,752 / 1,438 vs 1,436).
+`xsltproc` is still REQUIRED because two serialization defects remain: a raw CR
+where libxslt writes `&#13;` (which would lose the X12 CRLF terminator on
+re-parse) and indentation inserted inside text nodes (which FixedFormXml
+consumes verbatim).
 
-### Validation Plugins: 1 of 1 DONE
-X12Validator (otto JS engine; scripts in resources/scripts/validation/)
+### Validation Plugins: 1 of 1 DONE, and it no longer lies
+X12Validator (otto JS engine; scripts in resources/scripts/validation/). Until
+2026-09-15 it hardcoded `Status: "success"` regardless of the script's verdict,
+so every invalid payload — empty input, binary garbage, truncated envelopes —
+was reported valid. It now rolls the status up from the script's verdict using
+the Java `ValidationStatus` vocabulary and severity precedence, emits the
+script's real messages, rejects delimiter inconsistencies before the script runs
+(as the Java does), and reports a nil config instead of panicking. Deferred:
+spec-script selection by GS08 (the port hardcodes the 837P script).
 
 ### Parser Plugins: 4 of 4 DONE
 X12 (envelope), X12835 (835 remittance), X12997 (997 acknowledgment), X12271 (271 eligibility)

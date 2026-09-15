@@ -84,27 +84,69 @@ All 20 endpoints are also reachable through the SOAP 1.1 compatibility layer
 
 ## REMAINING (verified broken or missing as of 2026-09-15)
 
-- [ ] **In-process XSLT engine is not equivalent to `xsltproc`.** `xsltproc` is
-      still REQUIRED in production. `common/xsl_micro_test.go` pins 14 constructs:
-      7 pass, 7 fail. The failures are node-set-valued variables (in `for-each`,
-      `with-param`, global scope and inside predicates) and `set:distinct()`, which
-      returns an empty node set for every argument. Against the real stylesheets,
-      `TestXslTransform_Compare` fails 4/4: 4010_837p 6,425 vs 15,287 B, 5010_837p
-      6,396 vs 15,607 B, cms1500 34 vs 9,698 B, statement 34 vs 2,048 B.
-- [ ] **GatewayEDI eligibility request envelope** is not the vendor's request: it
-      PGP-encrypts a made-up `<eligibilityRequest>` body and POSTs it to a
+- [ ] **In-process XSLT engine is not equivalent to `xsltproc` yet**, but the gap is
+      now serialization, not content. `common/xsl_micro_test.go` passes **14/14**
+      (was 7/14; `xpath v1.3.11` + `ratago 81df787` fixed node-set variables and
+      EXSLT `set:distinct`). For the four shipped stylesheets, after stripping
+      whitespace adjacent to tag boundaries the outputs are 11,135 vs 11,135 bytes
+      (4010_837p), 11,344 vs 11,335 (5010_837p), 6,743 vs 6,752 (cms1500) and
+      1,438 vs 1,436 (statement) — i.e. near-identical. `xsltproc` is still REQUIRED
+      because of two serialization defects being fixed: ratago emits a **raw CR**
+      where xsltproc writes `&#13;` (a conformant parser normalizes the raw CR away,
+      so the X12 CRLF terminator degrades to LF), and it indents **inside text
+      nodes**, which `FixedFormXml` consumes verbatim
+      (`translation/fixedformxml.go:109`).
+- [ ] **`task` scheduler cannot parse the schedules the database contains.** The
+      `jobSchedule` column holds cron4j patterns (`migrations/001_legacy.up.sql:352`
+      seeds `'* * * * *'` and `'*/30 * * * *'`; the Java parsed the same column with
+      `it.sauronsoftware.cron4j.SchedulingPattern`, `MasterControl.java:29,213`),
+      but `task/scheduler.go` only calls `time.ParseDuration`, so every seeded job is
+      rejected with `time: invalid duration` and never runs. The job-2 seed row also
+      carries the legacy typo `EligibiltyTask`, which matches no class. Also pinned:
+      `Stop()` panics on a second call, a stop request is dropped while the runner is
+      busy (so a busy task runs forever), `runTask` panics on a non-positive interval
+      from inside a goroutine (kills the process), and `s.ticker` is read/written
+      without synchronisation.
+- [ ] **Prometheus metrics record the wrong status.** Errors returned by handlers and
+      all 404/405s are recorded as `status="200"` (Prometheus is registered innermost,
+      so `HTTPErrorHandler` runs after it), a gzip-wrapped writer fails the
+      `*echo.Response` assertion and hardcodes 200 (every browser client), panicking
+      requests appear in neither counter nor histogram, and 401s rejected by BasicAuth
+      are not counted at all.
+- [ ] **Validator: spec-script selection deferred.** The port hardcodes
+      `004010X098A1.js` (837P) and applies it to 835/271 payloads too, where the Java
+      derives the script from GS08 (`X12Validator.java:56,139-145`). Needs a decision
+      on which scripts ship and whether an unknown GS08 is rejected or falls back.
+- [ ] **GatewayEDI eligibility request envelope** is still not the vendor's request:
+      it PGP-encrypts a made-up `<eligibilityRequest>` body and POSTs it to a
       configured URI with no Authorization header, while the real API
-      (`https://services.gatewayedi.com/eligibility/service.asmx?WSDL`) is plain
-      SOAP for `DoInquiry` taking a `WSEligibilityInquiry` (MyNameValue parameters
-      + `ResponseDataType=Xml`) with HTTP Basic auth and no PGP. Decision pending.
-- [ ] **Medicare HETS eligibility** returns a canned X12 271 success without any
-      HTTP call (it needs CMS credentials). The real `EligibilityStatus` values now
-      exist, so it can report the failure honestly instead. Decision pending.
+      (`https://services.gatewayedi.com/eligibility/service.asmx?WSDL`) is plain SOAP
+      for `DoInquiry` taking a `WSEligibilityInquiry` (MyNameValue parameters +
+      `ResponseDataType=Xml`) with HTTP Basic auth and no PGP. Decision pending.
+- [ ] **Medicare HETS eligibility** returns a canned X12 271 success without any HTTP
+      call (it needs CMS credentials). Decision pending.
 - [ ] **CI does not test the sub-modules.** `.github/workflows/go.yml` runs
       `go test -v ./...` from the root, which in workspace mode covers only
       root-module packages, so `api`, `client`, `common`, `config`, `jobqueue`,
-      `model`, `model/user`, `render`, `translation` and `transport` are never
-      tested. Deliberately deferred until the XSLT engine work lands, so CI is not
-      knowingly red in the meantime.
+      `model`, `model/user`, `render`, `translation` and `transport` are never tested.
 - [ ] **Test coverage still missing** for `client`, `model`, `model/user`,
-      `scooper`, and 6 of the 7 transport plugins.
+      `scooper`, and 6 of the 7 transport plugins. (`validation`, `middleware`,
+      `task` and `crypto` gained suites on 2026-09-15.)
+
+## FIXED on 2026-09-15 (this file previously claimed these worked)
+
+- [X] **X12 validator reported every payload as valid.** `x12validator.go` hardcoded
+      `Status: "success"` while the JS script's verdict sat unused inside a JSON blob
+      in `Messages`, so empty input, binary garbage and truncated envelopes were all
+      reported valid to REST and SOAP callers. Now the status is rolled up from the
+      script verdict with the Java `ValidationStatus` vocabulary and severity
+      precedence, and messages are the real messages.
+- [X] **Wrong-delimiter payloads accepted.** A payload declaring `*` and using `|` was
+      reported `OK`; the structural check now runs before the script, where the Java
+      does it.
+- [X] **GatewayEDI eligibility returned success without contacting anyone** (it was a
+      stub). It now performs the real POST, maps all 8 `SuccessCode` values per the
+      Java plugin, and fails closed.
+- [X] **`eligibility` was missing 4 of 5 status values and 6 of 8 success codes**,
+      so no plugin could report what real payers return.
+
