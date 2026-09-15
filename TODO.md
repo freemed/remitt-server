@@ -182,15 +182,39 @@ contract, and each flipped test was RED-verified against the reverted code first
    while accepting short junk; `FromContext` reported a typed-nil user as found.
    All fixed.
 
-### ALSO FOUND, NOT YET FIXED (client/server surface mismatches)
+### ALSO FOUND, NOT YET FIXED: the transport plugins are never given their options
 
-- `client.PayloadResubmit` calls `GET /api/payload/resubmit/:id`, but
-  `api/payload.go`'s `init()` registers **no resubmit route at all**, so
-  `Api.PayloadResubmit` is unreachable over HTTP and `api/api_test.go` drives it
-  by calling the method directly. The route or the handler needs to move.
-- `client.Ping` calls `GET /api/ping/:text` while the server registers
-  `POST /:text` (`api/api.go:26`) — same verb-mismatch class as the fixed defects,
-  on both sides of the wire.
+- `jobqueue.executeJob` instantiates the transporter, calls `SetContext(ctx)` and
+  `InputFormat()`, and **never calls `SetOptions`** — the only non-test `SetOptions`
+  callers in the whole tree are the scratch probe under `.hermes/probe-tmp/`. So
+  every transport runs unconfigured: `Sftp.Transport` fails its own validation
+  ("sftpscooper: host/port not configured" before any dial), and gatewayedi,
+  claimlogic, storefile, storefilepdf and the script transports are in the same
+  position. **This is why the transports still cannot deliver even after the
+  registry and host-key fixes.**
+- The values exist in the database and are already keyed the way a plugin needs
+  them: `tUserConfig` is `(user, namespace, option, value)` and the seed rows are
+  `('Administrator', 'org.remitt.plugin.transport.SftpTransport', 'sftpHost', '')`
+  — i.e. namespace = the plugin's Java FQCN, which the registry now accepts.
+- The precedent for fixing it is already in the codebase, and the transports are
+  the outlier: **every eligibility plugin self-configures** by calling
+  `model.GetConfigValues(username)` inside the plugin (`eligibility/optum.go:170`,
+  `stedi.go:175`, `bcbs_fhir.go:277`, `sftp.go:67`, `ncmedicaid.go:121`,
+  `medicare_hets.go:188`, `gatewayedi.go:375`), while the transport interface
+  exposes `SetOptions` and nothing calls it. Either wire the pipeline (load,
+  filter by namespace, `SetOptions` before `Transport`) or make the transports
+  self-configure like their eligibility counterparts.
+
+### FIXED: client/server surface mismatches
+
+- `client.PayloadResubmit` called `GET /api/payload/resubmit/:id` but the server
+  registered no resubmit route at all. Registered (it mutates state, so GET is a
+  compatibility choice, documented in the code).
+- `client.Ping` called `GET /api/ping/:text` while only POST was registered.
+  GET is now registered; POST is kept because it was already published.
+- `api/route_contract_test.go` drives both through the real router, and its five
+  assertions were proven non-vacuous by running them against an isolated copy
+  carrying the original registrations (all five failed there).
 
 ## FIXED on 2026-09-15 (this file previously claimed these worked)
 
