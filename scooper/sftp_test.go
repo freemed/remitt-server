@@ -4,9 +4,14 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"os"
+	"sort"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 // newConfiguredSftpScooper builds an SftpScooper with exactly the parameters
@@ -155,39 +160,304 @@ func TestSftpScooper_SetParameters_MapsConfigKeys(t *testing.T) {
 	}
 }
 
-// TestSftpScooper_SetParameters_PortParsing pins what fmt.Sscanf("%d") does with
-// the sftpPort string (sftp.go:164-166). The parse error is discarded, so a
-// malformed port silently becomes 0 or a truncated number instead of a
-// configuration error.
-func TestSftpScooper_SetParameters_PortParsing(t *testing.T) {
+// TestSftpScooper_SetParameters_PortParsingIsStrict is the regression test for
+// the discarded fmt.Sscanf error (sftp.go:164-166). A malformed sftpPort used to
+// be truncated ("2222xyz" -> 2222), silently zeroed ("abc" -> 0, "22.5" -> 22,
+// "0x22" -> 0, an overflowing literal -> 0) or accepted as negative ("-1" passed
+// the host/port guard and was dialled). It must now be rejected: no truncated
+// value, and a reported configuration error instead.
+//
+// SetParameters still returns nil — the plugin loader never inspects it — so the
+// error is asserted through validateConfig, which is what Scoop consults before
+// any database or network access.
+func TestSftpScooper_SetParameters_PortParsingIsStrict(t *testing.T) {
 	tests := []struct {
-		name string
-		in   string
-		want int
+		name            string
+		in              string
+		want            int
+		wantInvalidPort bool
 	}{
-		{"plainPort", "22", 22},
-		{"leadingSpace", " 2222", 2222},
-		{"trailingGarbageTruncates", "2222xyz", 2222},
-		{"signed", "+2200", 2200},
-		{"zero", "0", 0},
-		{"negativeIsAccepted", "-1", -1},
-		{"floatTruncates", "22.5", 22},
-		{"hexishParsesAsZero", "0x22", 0},
-		{"emptyIsIgnored", "", 0},
-		{"nonNumericIsIgnored", "abc", 0},
-		{"overflowLeavesZero", "99999999999999999999", 0},
+		{"plainPort", "22", 22, false},
+		{"leadingSpace", " 2222", 2222, false},
+		{"signed", "+2200", 2200, false},
+		{"zeroMeansUnset", "0", 0, false},
+		{"emptyMeansUnset", "", 0, false},
+		{"trailingGarbageIsRejected", "2222xyz", 0, true},
+		{"nonNumericIsRejected", "abc", 0, true},
+		{"negativeIsRejected", "-1", 0, true},
+		{"fractionalIsRejected", "22.5", 0, true},
+		{"hexishIsRejected", "0x22", 0, true},
+		{"overflowIsRejected", "99999999999999999999", 0, true},
+		{"aboveRangeIsRejected", "65536", 0, true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := &SftpScooper{}
 			if err := s.SetParameters(map[string]string{"sftpHost": "sftp.example.invalid", "sftpPort": tt.in}); err != nil {
-				t.Fatalf("SetParameters() error = %v; want nil", err)
+				t.Fatalf("SetParameters() error = %v; want nil (the port is reported by Scoop, not by the setter)", err)
 			}
 			if s.port != tt.want {
-				t.Errorf("sftpPort %q parsed to %d; want %d", tt.in, s.port, tt.want)
+				t.Errorf("sftpPort %q parsed to %d; want %d (a malformed value must never be truncated or go negative)", tt.in, s.port, tt.want)
+			}
+
+			err := s.validateConfig()
+			switch {
+			case tt.wantInvalidPort:
+				if err == nil {
+					t.Fatalf("validateConfig() error = nil for sftpPort %q; want the malformed port reported", tt.in)
+				}
+				if !strings.Contains(err.Error(), fmt.Sprintf("invalid sftpPort %q", tt.in)) {
+					t.Errorf("validateConfig() error = %q; want it to name the malformed value %q", err.Error(), tt.in)
+				}
+				if !strings.Contains(err.Error(), "sftpscooper: host/port not configured") {
+					t.Errorf("validateConfig() error = %q; want the host/port configuration error", err.Error())
+				}
+			case tt.want == 0:
+				// "0" and an absent port both mean "not configured": the generic
+				// guard, not a malformed value.
+				if err == nil {
+					t.Fatalf("validateConfig() error = nil for an unset port; want the host/port configuration error")
+				}
+				if strings.Contains(err.Error(), "invalid sftpPort") {
+					t.Errorf("validateConfig() error = %q; want the generic not-configured error for an unset port", err.Error())
+				}
+			default:
+				if err != nil {
+					t.Errorf("validateConfig() error = %v; want nil for the usable port %d", err, tt.want)
+				}
 			}
 		})
+	}
+}
+
+// TestSftpScooper_Scoop_MalformedPortNeverReachesDatabaseOrNetwork pins the
+// consequence of the strict parse: a port that does not parse is reported before
+// the dedupe query runs and before any session is opened, so "22xyz" can never
+// dial port 22 and "-1" can never dial at all.
+func TestSftpScooper_Scoop_MalformedPortNeverReachesDatabaseOrNetwork(t *testing.T) {
+	fake := installFakeScooperDB(t)
+
+	s := &SftpScooper{}
+	if err := s.SetParameters(map[string]string{
+		"sftpHost": "sftp.example.invalid",
+		"sftpPort": "22xyz",
+		"sftpPath": "remits",
+	}); err != nil {
+		t.Fatalf("SetParameters() error = %v; want nil", err)
+	}
+	if err := s.SetUsername("user1"); err != nil {
+		t.Fatalf("SetUsername() error = %v; want nil", err)
+	}
+
+	dialed := false
+	s.sessionOpener = func() (sftpSession, error) {
+		dialed = true
+		return nil, errors.New("a session must not be opened for a malformed port")
+	}
+
+	results, err := s.Scoop()
+	if err == nil {
+		t.Fatal("Scoop() error = nil; want the malformed sftpPort to be reported")
+	}
+	if results != nil {
+		t.Errorf("Scoop() results = %v; want nil alongside the error", results)
+	}
+	if !strings.Contains(err.Error(), `invalid sftpPort "22xyz"`) {
+		t.Errorf("Scoop() error = %q; want it to name the malformed value", err.Error())
+	}
+	if !strings.Contains(err.Error(), "sftpscooper: host/port not configured") {
+		t.Errorf("Scoop() error = %q; want the host/port configuration error", err.Error())
+	}
+	if dialed {
+		t.Error("Scoop opened an SFTP session despite the malformed port")
+	}
+	if got := fake.scoopedQueryCount(); got != 0 {
+		t.Errorf("previously-scooped query ran %d times; want 0 (the configuration error comes first)", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// In-memory SFTP session
+//
+// SftpScooper.scoop's file loop is reachable only through a session, and the
+// dependency tree ships a client but no server (ssh.Dial is called directly), so
+// the injected sessionOpener is the only way to exercise the loop — and with it
+// the PostProcess dispatch and the persistence of what was downloaded — from a
+// test. No SSH or SFTP server is started and no external host is contacted.
+// ---------------------------------------------------------------------------
+
+// fakeSftpSession serves a fixed directory of files from memory.
+type fakeSftpSession struct {
+	mu      sync.Mutex
+	files   map[string][]byte
+	listErr error
+	openErr error
+	closed  bool
+}
+
+func (f *fakeSftpSession) Join(elem ...string) string {
+	parts := make([]string, 0, len(elem))
+	for _, e := range elem {
+		if e = strings.Trim(e, "/"); e == "" {
+			continue
+		}
+		parts = append(parts, e)
+	}
+	return strings.Join(parts, "/")
+}
+
+func (f *fakeSftpSession) ReadDir(string) ([]os.FileInfo, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+
+	names := make([]string, 0, len(f.files))
+	for name := range f.files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	infos := make([]os.FileInfo, 0, len(names))
+	for _, name := range names {
+		infos = append(infos, fakeSftpFileInfo{name: name, size: int64(len(f.files[name]))})
+	}
+	return infos, nil
+}
+
+func (f *fakeSftpSession) Open(path string) (io.ReadCloser, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.openErr != nil {
+		return nil, f.openErr
+	}
+
+	content, found := f.files[path[strings.LastIndex(path, "/")+1:]]
+	if !found {
+		return nil, fmt.Errorf("fakeSftpSession: no such file %q", path)
+	}
+	return io.NopCloser(bytes.NewReader(content)), nil
+}
+
+func (f *fakeSftpSession) Close() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.closed = true
+	return nil
+}
+
+func (f *fakeSftpSession) wasClosed() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.closed
+}
+
+// fakeSftpFileInfo is the minimum os.FileInfo the file loop reads.
+type fakeSftpFileInfo struct {
+	name string
+	size int64
+}
+
+func (f fakeSftpFileInfo) Name() string       { return f.name }
+func (f fakeSftpFileInfo) Size() int64        { return f.size }
+func (f fakeSftpFileInfo) Mode() os.FileMode  { return 0 }
+func (f fakeSftpFileInfo) ModTime() time.Time { return time.Time{} }
+func (f fakeSftpFileInfo) IsDir() bool        { return false }
+func (f fakeSftpFileInfo) Sys() any           { return nil }
+
+// withFakeSftpSession installs an in-memory session on s so its Scoop file loop
+// runs without an SSH server.
+func withFakeSftpSession(s *SftpScooper, files map[string][]byte) *fakeSftpSession {
+	session := &fakeSftpSession{files: files}
+	s.sessionOpener = func() (sftpSession, error) { return session, nil }
+	return session
+}
+
+// TestSftpScooper_Scoop_StoresDownloadedFilesAndSkipsScoopedOnes drives the file
+// loop end to end: a file already recorded in tScooper is skipped, a new file is
+// downloaded, transformed by the base PostProcess (identity), stored exactly as
+// downloaded and returned, and the session is closed.
+func TestSftpScooper_Scoop_StoresDownloadedFilesAndSkipsScoopedOnes(t *testing.T) {
+	fake := installFakeScooperDB(t)
+	fake.setScoopedRows(fakeScooperRecord(1, SftpScooperClass, "user1", time.Now(),
+		"sftp.example.invalid", "remits", "already.edi", []byte("old bytes")))
+
+	s := newConfiguredSftpScooper(t, "user1", "sftp.example.invalid", 22, "remits")
+	session := withFakeSftpSession(s, map[string][]byte{
+		"already.edi": []byte("old bytes"),
+		"new.edi":     []byte("fresh remittance"),
+	})
+
+	results, err := s.Scoop()
+	if err != nil {
+		t.Fatalf("Scoop() error = %v; want nil", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("Scoop() returned %d results; want 1 (already.edi must be skipped)", len(results))
+	}
+	if results[0].Filename != "new.edi" {
+		t.Errorf("result filename = %q; want %q", results[0].Filename, "new.edi")
+	}
+	if string(results[0].Content) != "fresh remittance" {
+		t.Errorf("result content = %q; want the downloaded bytes unchanged", results[0].Content)
+	}
+
+	if got := fake.insertCount(); got != 1 {
+		t.Fatalf("tScooper inserts = %d; want exactly 1", got)
+	}
+	args := fake.insertedArgs()
+	if len(args) != 7 {
+		t.Fatalf("tScooper insert args = %v; want 7 values", args)
+	}
+	if got := fmt.Sprint(args[5]); got != "new.edi" {
+		t.Errorf("inserted filename = %v; want new.edi", got)
+	}
+	content, ok := args[6].([]byte)
+	if !ok {
+		t.Fatalf("inserted content is %T; want []byte", args[6])
+	}
+	if string(content) != "fresh remittance" {
+		t.Errorf("stored content = %q; want the downloaded bytes unchanged", content)
+	}
+	if !session.wasClosed() {
+		t.Error("the SFTP session was not closed after the scoop")
+	}
+}
+
+// TestKnownBug_ScoopWithUninitializedDatabasePanics pinned a robustness defect:
+// sftp.go:42 dereferenced model.SqlDb without checking that model.InitDb had
+// run, so a scooper run in a process without a database panicked instead of
+// returning an error. The guard at sftp.go:37 only covered host/port.
+//
+// The corrected contract: Scoop reports the uninitialised database and does not
+// touch the network.
+func TestSftpScooper_ScoopWithUninitializedDatabaseReturnsError(t *testing.T) {
+	withNilSqlDb(t)
+
+	s := newConfiguredSftpScooper(t, "user1", "sftp.example.invalid", 22, "remits")
+
+	dialed := false
+	s.sessionOpener = func() (sftpSession, error) {
+		dialed = true
+		return nil, errors.New("a session must not be opened without a database")
+	}
+
+	results, err := s.Scoop()
+	if err == nil {
+		t.Fatal("Scoop() error = nil; want a database-not-initialised error instead of a nil dereference")
+	}
+	if results != nil {
+		t.Errorf("Scoop() results = %v; want nil alongside the error", results)
+	}
+	if !strings.Contains(err.Error(), "sftpscooper: database not initialized") {
+		t.Errorf("Scoop() error = %q; want it to contain %q", err.Error(), "sftpscooper: database not initialized")
+	}
+	if dialed {
+		t.Error("Scoop opened an SFTP session before noticing the database is missing")
 	}
 }
 
@@ -360,30 +630,5 @@ func TestSftpScooper_PostProcess_DefaultIsIdentity(t *testing.T) {
 				t.Errorf("PostProcess() depends on the filename: %q vs %q", other, got)
 			}
 		})
-	}
-}
-
-// TestKnownBug_ScoopWithUninitializedDatabasePanics pins a robustness defect:
-// sftp.go:42 dereferences model.SqlDb without checking that model.InitDb has
-// run, so a scooper run in a process without a database panics instead of
-// returning an error. This documents current behaviour; the guard at sftp.go:37
-// only covers host/port.
-func TestKnownBug_ScoopWithUninitializedDatabasePanics(t *testing.T) {
-	withNilSqlDb(t)
-
-	s := newConfiguredSftpScooper(t, "user1", "sftp.example.invalid", 22, "remits")
-
-	var panicked any
-	var err error
-	func() {
-		defer func() { panicked = recover() }()
-		_, err = s.Scoop()
-	}()
-
-	if panicked == nil {
-		t.Fatalf("Scoop() returned err = %v without panicking; want the current behaviour (a nil model.SqlDb dereference at sftp.go:42)", err)
-	}
-	if !strings.Contains(fmt.Sprint(panicked), "nil pointer dereference") {
-		t.Errorf("Scoop() panicked with %v; want a nil pointer dereference from the unguarded model.SqlDb use", panicked)
 	}
 }

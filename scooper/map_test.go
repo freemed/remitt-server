@@ -165,8 +165,9 @@ func TestRegisterScooper_LaterRegistrationWins(t *testing.T) {
 // TestRegisterScooper_ConcurrentRegistrations exercises the write side of the
 // registry mutex: many goroutines registering distinct names at once. Run with
 // -race this fails if RegisterScooper ever stops locking. Lookups are done
-// afterwards on purpose: mixing them with writes is covered by the pinned bug
-// below, which crashes the process.
+// afterwards on purpose: mixing them with writes is covered by
+// TestInstantiateScooper_ReadsRegistryUnderLock and its process-level sibling
+// below.
 func TestRegisterScooper_ConcurrentRegistrations(t *testing.T) {
 	const workers = 16
 
@@ -199,18 +200,17 @@ func TestRegisterScooper_ConcurrentRegistrations(t *testing.T) {
 	}
 }
 
-// TestKnownBug_InstantiateScooperReadsRegistryWithoutLock pins the locking
-// asymmetry in scooper/map.go: RegisterScooper writes under
-// scooperRegistryLock (map.go:15-17) but InstantiateScooper reads the map with
-// no lock at all (map.go:22). Concurrent registration and instantiation is
-// therefore an unsynchronised map read/write, which the Go runtime aborts with
-// "fatal error: concurrent map read and map write" — an unrecoverable crash,
-// not a recoverable panic (see the process-level reproduction below).
+// TestInstantiateScooper_ReadsRegistryUnderLock is the regression test for the
+// locking asymmetry in scooper/map.go: RegisterScooper writes the registry under
+// scooperRegistryLock, so the lookup in InstantiateScooper must take the same
+// lock. Concurrent registration and instantiation would otherwise be an
+// unsynchronised map read/write, which the Go runtime aborts with
+// "fatal error: concurrent map read and map write" — an unrecoverable crash, not
+// a recoverable panic (see the process-level reproduction below).
 //
-// This test proves the asymmetry without triggering the crash: with the write
-// lock held, a guarded reader would block, while the current unguarded reader
-// returns immediately.
-func TestKnownBug_InstantiateScooperReadsRegistryWithoutLock(t *testing.T) {
+// With the write lock held the lookup must block: that is what proves it shares
+// the lock with RegisterScooper.
+func TestInstantiateScooper_ReadsRegistryUnderLock(t *testing.T) {
 	scooperRegistryLock.Lock()
 
 	done := make(chan struct{})
@@ -223,21 +223,44 @@ func TestKnownBug_InstantiateScooperReadsRegistryWithoutLock(t *testing.T) {
 	select {
 	case <-done:
 		scooperRegistryLock.Unlock()
-		// Current behaviour: the lookup proceeded while the write lock was
-		// held, so it is not synchronised with RegisterScooper.
-	case <-time.After(500 * time.Millisecond):
-		scooperRegistryLock.Unlock()
-		t.Fatal("InstantiateScooper blocked while scooperRegistryLock was held; the read is synchronised now, so this bug appears to be fixed")
+		t.Fatal("InstantiateScooper returned while scooperRegistryLock was held; the registry read is not synchronised with RegisterScooper")
+	case <-time.After(250 * time.Millisecond):
+		// Expected: the lookup is waiting for the registry lock.
+	}
+
+	scooperRegistryLock.Unlock()
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("InstantiateScooper never returned after the registry lock was released")
 	}
 }
 
 // scooperChildEnv marks the child process of
-// TestKnownBug_ConcurrentInstantiateAndRegisterCrashesProcess.
+// TestInstantiateScooper_ConcurrentRegistrationAndLookupIsRaceFree.
 const scooperChildEnv = "REMITT_SCOOPER_REGISTRY_RACE_CHILD"
 
+// scooperHammerMarker is printed by the child once the hammer has run to
+// completion, so the parent can tell "survived the race" from "died before
+// doing any work".
+const scooperHammerMarker = "scooper registry hammer completed without a fatal error"
+
+const (
+	// scooperHammerDuration keeps the hammer long enough to collide many times
+	// and short enough not to dominate the suite.
+	scooperHammerDuration = 1 * time.Second
+
+	// scooperHammerNames bounds the set of registered names: the hammer must
+	// contend on the same map (re-registration is still a map write), not grow
+	// it without limit for the length of the run.
+	scooperHammerNames = 32
+)
+
 // scooperHammerRegistry mixes concurrent registrations with concurrent lookups
-// until the runtime aborts the process. It returning at all means the race was
-// not detected.
+// for scooperHammerDuration. If the lookup is not synchronised with the write,
+// the runtime aborts the process ("concurrent map read and map write") and this
+// function never returns.
 func scooperHammerRegistry() {
 	var wg sync.WaitGroup
 	stop := make(chan struct{})
@@ -266,46 +289,48 @@ func scooperHammerRegistry() {
 				return
 			default:
 			}
-			RegisterScooper(fmt.Sprintf("child.hammer.%d", i), func() Scooper { return &SftpScooper{} })
+			RegisterScooper(fmt.Sprintf("child.hammer.%d", i%scooperHammerNames), func() Scooper { return &SftpScooper{} })
 		}
 	}()
 
-	time.Sleep(3 * time.Second)
+	time.Sleep(scooperHammerDuration)
 	close(stop)
 	wg.Wait()
 }
 
-// TestKnownBug_ConcurrentInstantiateAndRegisterCrashesProcess reproduces the
-// crash caused by the unguarded registry read. The failure is a runtime fatal
-// error, which kills the test process and cannot be recovered or asserted from
-// inside it, so the race is exercised in a re-executed child of this same test
-// binary and the parent asserts on the child's exit status and output.
-func TestKnownBug_ConcurrentInstantiateAndRegisterCrashesProcess(t *testing.T) {
+// TestInstantiateScooper_ConcurrentRegistrationAndLookupIsRaceFree is the
+// process-level regression test for the unguarded registry read: lookups and
+// registrations run concurrently until the runtime aborts the process with
+// "fatal error: concurrent map read and map write". That failure cannot be
+// recovered or asserted from inside the process, so the race is exercised in a
+// re-executed child of this same test binary and the parent asserts on the
+// child's exit status and output. The child also prints a marker once the
+// hammer finishes, so a child that died early cannot be mistaken for a
+// synchronised registry.
+func TestInstantiateScooper_ConcurrentRegistrationAndLookupIsRaceFree(t *testing.T) {
 	if os.Getenv(scooperChildEnv) == "1" {
-		// Child mode: hammer the registry. If the runtime detects the race the
-		// process dies here; reaching the end means no crash was observed.
+		// Child mode: hammer the registry. The runtime kills this process if
+		// the read and the write are not synchronised.
 		scooperHammerRegistry()
+		fmt.Println(scooperHammerMarker)
 		return
 	}
 
-	const attempts = 3
-	for attempt := 1; attempt <= attempts; attempt++ {
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^"+t.Name()+"$", "-test.count=1", "-test.v")
-		cmd.Env = append(os.Environ(), scooperChildEnv+"=1")
-		out, err := cmd.CombinedOutput()
-		cancel()
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^"+t.Name()+"$", "-test.count=1", "-test.v")
+	cmd.Env = append(os.Environ(), scooperChildEnv+"=1")
+	out, err := cmd.CombinedOutput()
 
-		if err == nil {
-			continue // no crash detected this attempt; retry the race
-		}
-		if !strings.Contains(string(out), "concurrent map read and map write") {
-			t.Fatalf("child exited with %v but without the concurrent map error; output:\n%s", err, out)
-		}
-		return // reproduced
+	if err != nil {
+		t.Fatalf("child hammering RegisterScooper/InstantiateScooper concurrently exited with %v; want a clean exit; output:\n%s", err, out)
 	}
-
-	t.Fatalf("no child process crashed in %d attempts; the unguarded registry read may have been fixed", attempts)
+	if strings.Contains(string(out), "concurrent map read and map write") {
+		t.Fatalf("child died on a concurrent map read and map write; output:\n%s", out)
+	}
+	if !strings.Contains(string(out), scooperHammerMarker) {
+		t.Fatalf("child never finished the registry hammer, so the race was not exercised; output:\n%s", out)
+	}
 }
 
 // TestKnownBug_RegistryAcceptsNilFactoryAndReturnsNilScooper pins a second

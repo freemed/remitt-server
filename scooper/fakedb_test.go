@@ -127,6 +127,14 @@ func (f *scooperFakeDB) insertCount() int {
 	return f.insertQueries
 }
 
+// insertedArgs returns the arguments of the most recent tScooper insert:
+// (scooperClass, user, stamp, host, path, filename, content).
+func (f *scooperFakeDB) insertedArgs() []any {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]any(nil), f.insertArgs...)
+}
+
 func (f *scooperFakeDB) query(query string, args []driver.NamedValue) (driver.Rows, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
