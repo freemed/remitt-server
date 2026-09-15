@@ -2,28 +2,32 @@ package task
 
 // DB-free test suite for the task (job scheduler) package.
 //
-// Environment: this repository has no test database, and model.Queries is a nil
+// Environment: this repository has no test database and model.Queries is a nil
 // *dbgen.Queries without a live MySQL connection, so every code path that reads
-// tJobs panics on a nil dereference. The strategy is therefore:
+// tJobs has to nil-guard (which refreshJobs and RunEligibilityTask now do). The
+// strategy is therefore:
 //
 //  1. Exercise the pure logic directly: the job-class dispatch table
-//     (resolveRunner, scheduler.go:179), the jobSchedule string contract
-//     (time.ParseDuration, scheduler.go:111), NewScheduler and runTask's tick
-//     loop (scheduler.go:140) with an injected runner.
-//  2. Exercise the real dispatch code (refreshJobs, scheduler.go:67) against an
-//     in-memory database/sql driver installed on model.Queries. The scheduler
-//     has NO injection seam - refreshJobs dereferences the package-level
-//     model.Queries handle directly (scheduler.go:69) - so swapping that global
-//     is the only way to reach the code without MySQL; this is reported as a
-//     testability finding.
-//  3. Skip, naming the missing dependency, every DB-bound path that has no fake
+//     (resolveRunner), schedule parsing, and the next-fire-time computation
+//     (parseSchedule, nextFire), which is what the scheduler loop is built from.
+//  2. Exercise the real dispatch code (refreshJobs) against an in-memory
+//     database/sql driver installed on model.Queries. The scheduler has no
+//     injection seam for the job source, so swapping that global is the only way
+//     to reach the code without MySQL.
+//  3. Skip, naming the missing dependency, the DB-bound paths that have no fake
 //     (the convention already used by eligibility/gatewayedi_test.go and
 //     api/api_test.go).
 //
-// Defects found while writing this suite are pinned by characterization tests
-// (marked BUG in the test comment) and reported; production code was NOT
-// modified. Characterization assertions fail if a defect is fixed; update the
-// test when that happens.
+// Cron expectations in TestNextFireMatchesCron4j are not hand-written: they were
+// produced by running cron4j itself (it.sauronsoftware.cron4j:cron4j:2.2.5, the
+// dependency declared in ../remitt/pom.xml and used by
+// MasterControl.java:213) - `new Predictor(new SchedulingPattern(p), base)`
+// followed by three nextMatchingTime() calls, with base =
+// 2026-09-15T12:28:22Z in UTC. cron4j is the contract authority for the
+// tJobs.jobSchedule column, so where its behaviour is surprising (a step indexes
+// the value list rather than the value itself; day-of-month AND day-of-week
+// both have to match; "0-7" in the day-of-week field means Sunday only) the
+// expectations below encode cron4j's answer, not a generic cron's.
 
 import (
 	"context"
@@ -51,6 +55,10 @@ import (
 // helpers
 // ---------------------------------------------------------------------------
 
+// cronReferenceTime is the reference instant every cron expectation below is
+// relative to: the instant the cron4j oracle was run from.
+var cronReferenceTime = time.Date(2026, 9, 15, 12, 28, 22, 0, time.UTC)
+
 // waitFor polls cond until it returns true or the timeout elapses.
 func waitFor(timeout time.Duration, cond func() bool) bool {
 	deadline := time.Now().Add(timeout)
@@ -74,80 +82,34 @@ func doneClosed(done <-chan struct{}) bool {
 	}
 }
 
-// startRunTask runs the scheduler's tick loop in its own goroutine and returns a
-// channel closed when runTask has returned.
-func startRunTask(s *Scheduler, st *scheduledTask, interval time.Duration) <-chan struct{} {
+// startRunTask runs the scheduler's task loop in its own goroutine and returns a
+// channel closed when the loop has returned.
+func startRunTask(s *Scheduler, st *scheduledTask) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		s.runTask(st, interval)
+		s.runTask(st)
 	}()
 	return done
 }
 
-// loopGuard retires tasks deterministically so no test can hang or leak, and
-// remembers which stop channels it already closed.
-type loopGuard struct {
-	mu     sync.Mutex
-	closed map[*scheduledTask]bool
-}
-
-func newLoopGuard() *loopGuard {
-	return &loopGuard{closed: make(map[*scheduledTask]bool)}
-}
-
-func (g *loopGuard) isClosed(st *scheduledTask) bool {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	return g.closed[st]
-}
-
-// hardStop closes the task's stop channel, which the runTask select also
-// honours, so the goroutine always returns.
-func (g *loopGuard) hardStop(st *scheduledTask) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if g.closed[st] {
-		return
-	}
-	g.closed[st] = true
-	close(st.stopCh)
-}
-
-// retire stops a task through the production stop path. That path
-// ((*Scheduler).stopTask, scheduler.go:163) is best effort - it discards the
-// signal whenever the runTask goroutine is not parked in its select - so it is
-// polled; if the goroutine still has not returned by the deadline the stop
-// channel is closed directly. Safe to call repeatedly, and always bounded.
-func (g *loopGuard) retire(t *testing.T, s *Scheduler, st *scheduledTask, done <-chan struct{}, timeout time.Duration) bool {
-	if t != nil {
-		t.Helper()
-	}
-
+// stopAndWait signals a task through the production stop path (stopTask) and
+// waits for the task loop to return. Bounded, so a broken stop path fails the
+// test instead of hanging the suite.
+func stopAndWait(t *testing.T, s *Scheduler, st *scheduledTask, done <-chan struct{}, timeout time.Duration) bool {
+	t.Helper()
 	if done != nil && doneClosed(done) {
 		return true
 	}
-
-	if !g.isClosed(st) {
-		deadline := time.Now().Add(timeout)
-		for time.Now().Before(deadline) {
-			s.stopTask(st)
-			if done != nil && doneClosed(done) {
-				return true
-			}
-			time.Sleep(2 * time.Millisecond)
-		}
-		if t != nil {
-			t.Logf("finding: task %d did not retire through the production stop path within %s "+
-				"(scheduler.go:163 drops the signal while the runner is busy); hard-stopping it", st.ID, timeout)
-		}
-		g.hardStop(st)
-	}
-
+	s.stopTask(st)
 	if done == nil {
 		return true
 	}
-	return waitFor(timeout, func() bool { return doneClosed(done) })
+	if !waitFor(timeout, func() bool { return doneClosed(done) }) {
+		t.Errorf("task %d did not return within %s of a stop request through stopTask", st.ID, timeout)
+		return false
+	}
+	return true
 }
 
 // ---------------------------------------------------------------------------
@@ -222,8 +184,7 @@ func (r *fakeJobsRows) Next(dest []driver.Value) error {
 }
 
 // installFakeJobs points model.Queries at a hermetic in-memory database and
-// restores the previous handle when the test ends. It exists only because the
-// scheduler offers no way to inject a job source (scheduler.go:69).
+// restores the previous handle when the test ends.
 func installFakeJobs(t *testing.T) *fakeJobsSource {
 	t.Helper()
 
@@ -245,12 +206,12 @@ func installFakeJobs(t *testing.T) *fakeJobsSource {
 	return src
 }
 
-// schedulerFixture couples a fake job source with a scheduler and retires every
-// task it starts, so no test leaves a goroutine behind.
+// schedulerFixture couples a fake job source with a scheduler and signals every
+// task it started to stop, so no test leaves a task loop running.
 type schedulerFixture struct {
+	t        *testing.T
 	s        *Scheduler
 	src      *fakeJobsSource
-	g        *loopGuard
 	baseline int
 
 	mu      sync.Mutex
@@ -261,8 +222,8 @@ func newSchedulerFixture(t *testing.T) *schedulerFixture {
 	t.Helper()
 
 	f := &schedulerFixture{
+		t:        t,
 		s:        NewScheduler(),
-		g:        newLoopGuard(),
 		src:      installFakeJobs(t),
 		baseline: runtime.NumGoroutine(),
 	}
@@ -270,7 +231,7 @@ func newSchedulerFixture(t *testing.T) *schedulerFixture {
 	return f
 }
 
-// track remembers a task the scheduler started so the fixture can retire it.
+// track remembers a task the scheduler started so the fixture can stop it.
 func (f *schedulerFixture) track(st *scheduledTask) *scheduledTask {
 	if st == nil {
 		return nil
@@ -281,13 +242,40 @@ func (f *schedulerFixture) track(st *scheduledTask) *scheduledTask {
 	return st
 }
 
-// task returns the scheduler's current task for id (same package access).
+// task returns the scheduler's current task for id (same package access, under
+// the scheduler's lock so it is race free while the scheduler loop runs).
 func (f *schedulerFixture) task(id int64) *scheduledTask {
-	return f.track(f.s.tasks[id])
+	f.s.mu.Lock()
+	st := f.s.tasks[id]
+	f.s.mu.Unlock()
+	return f.track(st)
 }
 
-// stop retires every task the fixture saw; it runs as a t.Cleanup so a failing
-// assertion cannot leave a goroutine behind.
+// taskCount returns the number of tasks the scheduler currently holds.
+func (f *schedulerFixture) taskCount() int {
+	f.s.mu.Lock()
+	defer f.s.mu.Unlock()
+	return len(f.s.tasks)
+}
+
+// ticker returns the scheduler's refresh ticker, under the lock, so reading it
+// while the scheduler loop runs is race free.
+func (f *schedulerFixture) ticker() *time.Ticker {
+	f.s.mu.Lock()
+	defer f.s.mu.Unlock()
+	return f.s.ticker
+}
+
+// running reports the scheduler's lifecycle state.
+func (f *schedulerFixture) running() bool {
+	f.s.mu.Lock()
+	defer f.s.mu.Unlock()
+	return f.s.running
+}
+
+// stop signals every task the fixture saw. It runs as a t.Cleanup so a failing
+// assertion cannot leave a task loop behind: delivery is reliable now, so a
+// single signalStop per task is enough.
 func (f *schedulerFixture) stop() {
 	f.mu.Lock()
 	tracked := append([]*scheduledTask(nil), f.tracked...)
@@ -299,7 +287,7 @@ func (f *schedulerFixture) stop() {
 			continue
 		}
 		seen[st] = true
-		f.g.retire(nil, f.s, st, nil, 100*time.Millisecond)
+		st.signalStop()
 	}
 
 	if !waitFor(500*time.Millisecond, func() bool { return runtime.NumGoroutine() <= f.baseline }) {
@@ -310,7 +298,7 @@ func (f *schedulerFixture) stop() {
 }
 
 // ---------------------------------------------------------------------------
-// seed data (migrations/001_legacy.up.sql)
+// seed data (migrations/001_legacy.up.sql) and the data fix in 002
 // ---------------------------------------------------------------------------
 
 type seedJobRow struct {
@@ -319,6 +307,10 @@ type seedJobRow struct {
 	class    string
 	enabled  bool
 }
+
+// seededTypoClass is the misspelled job class 001_legacy.up.sql seeds for the
+// eligibility job.
+const seededTypoClass = "org.remitt.server.tasks.EligibiltyTask"
 
 var seedJobRowRe = regexp.MustCompile(`\(\s*(\d+)\s*,\s*'([^']*)'\s*,\s*'([^']*)'\s*,\s*(TRUE|FALSE)\s*\)`)
 
@@ -329,13 +321,13 @@ func loadSeedJobs(t *testing.T) []seedJobRow {
 	const rel = "../migrations/001_legacy.up.sql"
 	data, err := os.ReadFile(filepath.Join("..", "migrations", "001_legacy.up.sql"))
 	if err != nil {
-		t.Skipf("cannot read the tJobs seed migration %s: %v", rel, err)
+		t.Fatalf("cannot read the tJobs seed migration %s: %v", rel, err)
 	}
 
 	text := string(data)
 	start := strings.Index(text, "INSERT INTO tJobs VALUES")
 	if start < 0 {
-		t.Skipf("no 'INSERT INTO tJobs VALUES' block in %s", rel)
+		t.Fatalf("no 'INSERT INTO tJobs VALUES' block in %s", rel)
 	}
 	end := strings.Index(text[start:], ";")
 	if end < 0 {
@@ -344,7 +336,7 @@ func loadSeedJobs(t *testing.T) []seedJobRow {
 
 	matches := seedJobRowRe.FindAllStringSubmatch(text[start:start+end], -1)
 	if len(matches) == 0 {
-		t.Skipf("no tJobs rows matched in %s", rel)
+		t.Fatalf("no tJobs rows matched in %s", rel)
 	}
 
 	rows := make([]seedJobRow, 0, len(matches))
@@ -363,8 +355,52 @@ func loadSeedJobs(t *testing.T) []seedJobRow {
 	return rows
 }
 
+// jobClassFix is the class-name rewrite a data-fix migration performs, read out
+// of the migration file itself so the test exercises the statement that will run
+// against a real database rather than a copy of it.
+type jobClassFix struct {
+	from string
+	to   string
+}
+
+var jobClassFixRe = regexp.MustCompile(
+	`(?i)UPDATE\s+` + "`?" + `tJobs` + "`?" +
+		`\s+SET\s+` + "`?" + `jobClass` + "`?" + `\s*=\s*'([^']*)'` +
+		`\s+WHERE\s+` + "`?" + `jobClass` + "`?" + `\s*=\s*'([^']*)'`)
+
+// loadJobClassFix extracts the jobClass rewrite from a migration file.
+func loadJobClassFix(t *testing.T, file string) jobClassFix {
+	t.Helper()
+
+	path := filepath.Join("..", "migrations", file)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("cannot read the migration %s: %v", path, err)
+	}
+
+	matches := jobClassFixRe.FindAllStringSubmatch(string(data), -1)
+	if len(matches) == 0 {
+		t.Fatalf("%s contains no 'UPDATE tJobs SET jobClass = ... WHERE jobClass = ...' statement", path)
+	}
+	// Last match wins if a migration rewrites the same column more than once.
+	last := matches[len(matches)-1]
+	return jobClassFix{from: last[2], to: last[1]}
+}
+
+// applyJobClassFix applies a migration's rewrite to in-memory tJobs rows.
+func applyJobClassFix(rows []seedJobRow, fix jobClassFix) []seedJobRow {
+	out := make([]seedJobRow, len(rows))
+	copy(out, rows)
+	for i := range out {
+		if out[i].class == fix.from {
+			out[i].class = fix.to
+		}
+	}
+	return out
+}
+
 // ---------------------------------------------------------------------------
-// pure logic: construction, dispatch table, schedule contract
+// pure logic: construction, dispatch table
 // ---------------------------------------------------------------------------
 
 func TestNewSchedulerInitialState(t *testing.T) {
@@ -383,11 +419,13 @@ func TestNewSchedulerInitialState(t *testing.T) {
 		t.Error("NewScheduler(): ticker is non-nil before Start()")
 	}
 	if s.stopCh == nil {
-		t.Error("NewScheduler(): stopCh is nil; Stop() would panic")
+		t.Error("NewScheduler(): stopCh is nil; Stop() could not close it")
+	}
+	if s.running {
+		t.Error("NewScheduler(): running is true before Start()")
 	}
 
-	// stopCh must be open and unbuffered (Stop closes it; only the select in
-	// Start's goroutine may receive from it).
+	// stopCh must be open (Stop closes the channel of a running scheduler).
 	select {
 	case <-s.stopCh:
 		t.Error("NewScheduler(): stopCh is already closed")
@@ -416,8 +454,8 @@ func TestJobClassConstants(t *testing.T) {
 }
 
 // TestResolveRunnerDispatchTable pins the job-class to task-function mapping the
-// scheduler dispatches on (scheduler.go:179). Function identity is compared by
-// code pointer because function values are not comparable.
+// scheduler dispatches on. Function identity is compared by code pointer because
+// function values are not comparable.
 func TestResolveRunnerDispatchTable(t *testing.T) {
 	s := NewScheduler()
 
@@ -441,10 +479,12 @@ func TestResolveRunnerDispatchTable(t *testing.T) {
 		{"plugin_class_not_a_task", "org.remitt.plugin.eligibility.GatewayEDIEligibility", 0},
 		{"unknown_class", "com.example.NoSuchTask", 0},
 
-		// The class name seeded in migrations/001_legacy.up.sql:353 is missing
-		// its second "i" ("EligibiltyTask"), so it does not match the constant
-		// above and the seeded job is skipped as an unknown class.
-		{"seed_typo_class", "org.remitt.server.tasks.EligibiltyTask", 0},
+		// The class name 001_legacy.up.sql seeded ("EligibiltyTask", missing the
+		// second 'i') does not match the constant above. It is fixed in DATA by
+		// migrations/002_fix_seed_job_class.up.sql - there is deliberately no
+		// fuzzy fallback, so a mistyped class name still resolves to nothing and
+		// refreshJobs reports it instead of running the wrong task.
+		{"seed_typo_class_still_unresolvable", seededTypoClass, 0},
 	}
 
 	for _, tc := range cases {
@@ -467,160 +507,526 @@ func TestResolveRunnerDispatchTable(t *testing.T) {
 	}
 }
 
-// TestScheduleStringContract pins the jobSchedule values the scheduler accepts:
-// scheduler.go:111 parses the column with time.ParseDuration, so ONLY Go
-// duration strings schedule a job. Cron/Quartz expressions are rejected, and
-// zero or negative durations parse successfully but are handled badly later.
-func TestScheduleStringContract(t *testing.T) {
+// ---------------------------------------------------------------------------
+// schedule parsing: durations and cron4j patterns
+// ---------------------------------------------------------------------------
+
+// TestScheduleAcceptsDurationsAndCron pins which jobSchedule values are
+// schedulable. Both forms occur in the schema: tJobs.jobClass holds the Java
+// task class, and the Java implementation parsed the same column with cron4j
+// (MasterControl.java:213), so a cron pattern must be accepted; rows written for
+// the Go server use Go duration strings, which must keep working.
+func TestScheduleAcceptsDurationsAndCron(t *testing.T) {
 	cases := []struct {
 		name     string
 		schedule string
-		wantOK   bool
-		want     time.Duration
+		wantCron bool
+		wantDur  time.Duration
 	}{
-		{"seconds", "30s", true, 30 * time.Second},
-		{"minutes", "90m", true, 90 * time.Minute},
-		{"hours", "1h", true, time.Hour},
-		{"compound", "1h30m", true, 90 * time.Minute},
-		{"milliseconds", "500ms", true, 500 * time.Millisecond},
-		{"day_as_24h", "24h", true, 24 * time.Hour},
+		{"seconds", "30s", false, 30 * time.Second},
+		{"minutes", "90m", false, 90 * time.Minute},
+		{"hours", "1h", false, time.Hour},
+		{"compound", "1h30m", false, 90 * time.Minute},
+		{"milliseconds", "500ms", false, 500 * time.Millisecond},
+		{"day_as_24h", "24h", false, 24 * time.Hour},
 
-		{"cron_every_minute", "* * * * *", false, 0},
-		{"cron_every_30_minutes", "*/30 * * * *", false, 0},
-		{"quartz", "0 0/30 * * * ?", false, 0},
-		{"cron_nickname", "@every 1h", false, 0},
-		{"bare_number", "60", false, 0},
-		{"prose", "5 minutes", false, 0},
-		{"days", "1d", false, 0},
-		{"empty", "", false, 0},
-		{"whitespace", " ", false, 0},
-		{"trailing_newline", "1h\n", false, 0},
-
-		// ParseDuration accepts these, so they pass the scheduler's validation
-		// and reach time.NewTicker, which panics on a non-positive interval
-		// (see TestRunTaskPanicsOnNonPositiveInterval).
-		{"zero", "0s", true, 0},
-		{"zero_bare", "0", true, 0},
-		{"negative", "-5m", true, -5 * time.Minute},
+		{"seed_scooper_every_minute", "* * * * *", true, 0},
+		{"seed_eligibility_every_30_minutes", "*/30 * * * *", true, 0},
+		{"cron_daily_3am", "0 3 * * *", true, 0},
+		{"cron_with_names", "30 8 1 jan mon", true, 0},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := time.ParseDuration(tc.schedule)
-
-			if tc.wantOK {
-				if err != nil {
-					t.Fatalf("time.ParseDuration(%q) error = %v; want it accepted at scheduler.go:111", tc.schedule, err)
-				}
-				if got != tc.want {
-					t.Errorf("time.ParseDuration(%q) = %v; want %v", tc.schedule, got, tc.want)
-				}
+			parsed, err := parseSchedule(tc.schedule)
+			if err != nil {
+				t.Fatalf("parseSchedule(%q) error = %v; want it accepted", tc.schedule, err)
+			}
+			if parsed.isCron() != tc.wantCron {
+				t.Errorf("parseSchedule(%q).isCron() = %v; want %v", tc.schedule, parsed.isCron(), tc.wantCron)
+			}
+			if tc.wantCron {
 				return
 			}
-			if err == nil {
-				t.Errorf("time.ParseDuration(%q) = %v, nil; want a parse error so refreshJobs skips the job (scheduler.go:111-115)", tc.schedule, got)
+			if parsed.interval != tc.wantDur {
+				t.Errorf("parseSchedule(%q).interval = %s; want %s", tc.schedule, parsed.interval, tc.wantDur)
 			}
 		})
 	}
 }
 
-// TestSeedJobsAreRejectedByTheScheduler documents that neither row shipped in
-// migrations/001_legacy.up.sql can ever be scheduled: both jobSchedule values are
-// 5-field cron expressions and scheduler.go:111 parses the column as a Go
-// duration.
+// TestScheduleRejections pins the values that must not schedule a job, and that
+// the rejection carries an explanation: refreshJobs logs the reason it rejected
+// a row, so a bad schedule is visible instead of silently skipped.
+func TestScheduleRejections(t *testing.T) {
+	cases := []struct {
+		name     string
+		schedule string
+		wantErr  string
+	}{
+		{"empty", "", "empty schedule"},
+		{"whitespace", " ", "empty schedule"},
+		{"garbage", "garbage", "neither a cron4j cron pattern"},
+		{"prose", "5 minutes", "requires 5"},
+		{"four_fields", "* * * *", "requires 5"},
+		{"six_fields", "* * * * * *", "requires 5"},
+		{"cron_nickname", "@every 1h", "requires 5"},
+		{"quartz_question_mark", "0 0 1 * ?", "invalid value"},
+		{"quartz_last_day_of_week", "0 0 * * 1L", "invalid value"},
+		{"quartz_nth_weekday", "0 0 * * 1#2", "invalid value"},
+		{"zero_step", "*/0 * * * *", "step must be >= 1"},
+		{"negative_step", "*/-3 * * * *", "step must be >= 1"},
+		{"minute_out_of_range", "60 * * * *", "out of the minute range"},
+		{"hour_out_of_range", "0 24 * * *", "out of the hour range"},
+		{"day_of_month_out_of_range", "0 0 0 * *", "out of the day of month range"},
+		{"month_out_of_range", "0 0 * 13 *", "invalid value"},
+		{"day_of_week_out_of_range", "0 0 * * 8", "invalid value"},
+		{"unknown_month_name", "0 0 * january *", "invalid value"},
+		{"unknown_day_name", "0 0 * * funday", "invalid value"},
+		{"empty_list_element", "0 0 1,,2 * *", "empty list element"},
+		{"zero_duration", "0s", "non-positive duration"},
+		{"zero_bare", "0", "non-positive duration"},
+		{"negative_duration", "-5m", "non-positive duration"},
+		{"days_duration", "1d", "neither a cron4j cron pattern"},
+		{"trailing_newline", "1h\n", "neither a cron4j cron pattern"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			parsed, err := parseSchedule(tc.schedule)
+			if err == nil {
+				t.Fatalf("parseSchedule(%q) = %s, nil; want a rejection", tc.schedule, parsed.describe())
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("parseSchedule(%q) error = %q; want it to mention %q", tc.schedule, err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestNextFireMatchesCron4j is the schedule engine's oracle test. Every row was
+// produced by cron4j 2.2.5 itself (see the file header): three successive
+// Predicator.nextMatchingTime() values starting from 2026-09-15T12:28:22Z, i.e.
+// the next three instants strictly after the running fire time.
 //
-// BUG (seed data vs scheduler, migrations/001_legacy.up.sql:352-353 ->
-// scheduler.go:111): every seeded job is skipped with "Invalid schedule", so an
-// unmodified deployment runs no tasks at all. Characterization test: if the seed
-// data or the parser is fixed, update this test.
-func TestSeedJobsAreRejectedByTheScheduler(t *testing.T) {
+// The awkward rows are the point: cron4j steps over the enumerated value list
+// ("0/6" in the hour field is the hour 0 alone, not 0,6,12,18), ANDs
+// day-of-month with day-of-week ("0 0 13 * 5" is Friday the 13th), treats "0-7"
+// in the day-of-week field as Sunday only (both endpoints normalise through
+// % 7), wraps descending ranges ("fri-mon"), and accepts "L" for the last day of
+// the month.
+func TestNextFireMatchesCron4j(t *testing.T) {
+	cases := []struct {
+		name     string
+		schedule string
+		want     []string
+	}{
+		{"every_minute", "* * * * *", []string{
+			"2026-09-15T12:29:00Z", "2026-09-15T12:30:00Z", "2026-09-15T12:31:00Z"}},
+		{"every_thirty_minutes", "*/30 * * * *", []string{
+			"2026-09-15T12:30:00Z", "2026-09-15T13:00:00Z", "2026-09-15T13:30:00Z"}},
+		{"every_five_minutes", "*/5 * * * *", []string{
+			"2026-09-15T12:30:00Z", "2026-09-15T12:35:00Z", "2026-09-15T12:40:00Z"}},
+		{"daily_three_am", "0 3 * * *", []string{
+			"2026-09-16T03:00:00Z", "2026-09-17T03:00:00Z", "2026-09-18T03:00:00Z"}},
+		{"daily_one_am", "0 1 * * *", []string{
+			"2026-09-16T01:00:00Z", "2026-09-17T01:00:00Z", "2026-09-18T01:00:00Z"}},
+		{"first_of_month", "0 0 1 * *", []string{
+			"2026-10-01T00:00:00Z", "2026-11-01T00:00:00Z", "2026-12-01T00:00:00Z"}},
+		{"month_end_day", "0 0 31 * *", []string{
+			"2026-10-31T00:00:00Z", "2026-12-31T00:00:00Z", "2027-01-31T00:00:00Z"}},
+		{"last_day_of_month", "0 0 L * *", []string{
+			"2026-09-30T00:00:00Z", "2026-10-31T00:00:00Z", "2026-11-30T00:00:00Z"}},
+		{"day_list_including_last_day", "0 0 1,L * *", []string{
+			"2026-09-30T00:00:00Z", "2026-10-01T00:00:00Z", "2026-10-31T00:00:00Z"}},
+		{"day_range", "0 0 28-31 * *", []string{
+			"2026-09-28T00:00:00Z", "2026-09-29T00:00:00Z", "2026-09-30T00:00:00Z"}},
+		{"day_step_over_list", "0 0 */2 * *", []string{
+			"2026-09-17T00:00:00Z", "2026-09-19T00:00:00Z", "2026-09-21T00:00:00Z"}},
+
+		{"sunday_as_zero", "0 0 * * 0", []string{
+			"2026-09-20T00:00:00Z", "2026-09-27T00:00:00Z", "2026-10-04T00:00:00Z"}},
+		{"sunday_as_seven", "0 0 * * 7", []string{
+			"2026-09-20T00:00:00Z", "2026-09-27T00:00:00Z", "2026-10-04T00:00:00Z"}},
+		{"sunday_as_name", "0 0 * * sun", []string{
+			"2026-09-20T00:00:00Z", "2026-09-27T00:00:00Z", "2026-10-04T00:00:00Z"}},
+		{"day_name_uppercase", "0 0 * * MON", []string{
+			"2026-09-21T00:00:00Z", "2026-09-28T00:00:00Z", "2026-10-05T00:00:00Z"}},
+		{"weekday_list", "0 0 * * 1,3,5", []string{
+			"2026-09-16T00:00:00Z", "2026-09-18T00:00:00Z", "2026-09-21T00:00:00Z"}},
+		{"weekday_list_with_names", "0 0 * * 5,6,0", []string{
+			"2026-09-18T00:00:00Z", "2026-09-19T00:00:00Z", "2026-09-20T00:00:00Z"}},
+		{"weekday_range", "0 0 * * 1-5", []string{
+			"2026-09-16T00:00:00Z", "2026-09-17T00:00:00Z", "2026-09-18T00:00:00Z"}},
+		{"weekday_range_with_names", "0 0 * * mon-fri", []string{
+			"2026-09-16T00:00:00Z", "2026-09-17T00:00:00Z", "2026-09-18T00:00:00Z"}},
+		{"weekday_wrapping_range", "0 0 * * fri-mon", []string{
+			"2026-09-18T00:00:00Z", "2026-09-19T00:00:00Z", "2026-09-20T00:00:00Z"}},
+		// cron4j normalises both range endpoints through % 7, so "0-7" collapses
+		// to the single value 0 (Sunday) rather than meaning "every day".
+		{"weekday_zero_to_seven_is_sunday", "0 0 * * 0-7", []string{
+			"2026-09-20T00:00:00Z", "2026-09-27T00:00:00Z", "2026-10-04T00:00:00Z"}},
+		{"saturday_late", "45 23 * * 6", []string{
+			"2026-09-19T23:45:00Z", "2026-09-26T23:45:00Z", "2026-10-03T23:45:00Z"}},
+		{"weekend_noon", "0 12 * * 6,0", []string{
+			"2026-09-19T12:00:00Z", "2026-09-20T12:00:00Z", "2026-09-26T12:00:00Z"}},
+
+		{"month_name_with_day", "30 8 1 jan *", []string{
+			"2027-01-01T08:30:00Z", "2028-01-01T08:30:00Z", "2029-01-01T08:30:00Z"}},
+		{"month_name_range", "0 0 * jan-mar *", []string{
+			"2027-01-01T00:00:00Z", "2027-01-02T00:00:00Z", "2027-01-03T00:00:00Z"}},
+		{"month_uppercase_name", "0 0 * Jan *", []string{
+			"2027-01-01T00:00:00Z", "2027-01-02T00:00:00Z", "2027-01-03T00:00:00Z"}},
+		{"month_number_with_day", "5 0 * 8 *", []string{
+			"2027-08-01T00:05:00Z", "2027-08-02T00:05:00Z", "2027-08-03T00:05:00Z"}},
+		{"leap_day_only", "0 0 29 feb *", []string{
+			"2028-02-29T00:00:00Z", "2032-02-29T00:00:00Z", "2036-02-29T00:00:00Z"}},
+
+		// Both day fields restricted: cron4j requires BOTH to match.
+		{"friday_the_thirteenth", "0 0 13 * 5", []string{
+			"2026-11-13T00:00:00Z", "2027-08-13T00:00:00Z", "2028-10-13T00:00:00Z"}},
+		{"first_monday_of_month", "0 0 1-7 * 1", []string{
+			"2026-10-05T00:00:00Z", "2026-11-02T00:00:00Z", "2026-12-07T00:00:00Z"}},
+		{"fifteenth_falling_on_wednesday", "0 0 15 * 3", []string{
+			"2027-09-15T00:00:00Z", "2027-12-15T00:00:00Z", "2028-03-15T00:00:00Z"}},
+
+		// Steps index the enumerated value list, so "0/6" in the hour field
+		// selects hour 0 alone while "6,12,18" selects three hours.
+		{"hour_index_step_is_single_hour", "0 0/6 * * *", []string{
+			"2026-09-16T00:00:00Z", "2026-09-17T00:00:00Z", "2026-09-18T00:00:00Z"}},
+		{"hour_list", "0 6,12,18 * * *", []string{
+			"2026-09-15T18:00:00Z", "2026-09-16T06:00:00Z", "2026-09-16T12:00:00Z"}},
+		{"minute_index_step_inside_hour", "*/15 2 * * *", []string{
+			"2026-09-16T02:00:00Z", "2026-09-16T02:15:00Z", "2026-09-16T02:30:00Z"}},
+		{"minute_range_step", "1-30/7 * * * *", []string{
+			"2026-09-15T12:29:00Z", "2026-09-15T13:01:00Z", "2026-09-15T13:08:00Z"}},
+		{"hour_wrapping_range", "0 22-2 * * *", []string{
+			"2026-09-15T22:00:00Z", "2026-09-15T23:00:00Z", "2026-09-16T00:00:00Z"}},
+		{"hour_wrapping_range_with_step", "0 22-2/2 * * *", []string{
+			"2026-09-15T22:00:00Z", "2026-09-16T00:00:00Z", "2026-09-16T02:00:00Z"}},
+		{"minute_wrapping_range", "50-10 * * * *", []string{
+			"2026-09-15T12:50:00Z", "2026-09-15T12:51:00Z", "2026-09-15T12:52:00Z"}},
+		{"hour_step_over_weekdays", "0 9-17/4 * * 1-5", []string{
+			"2026-09-15T13:00:00Z", "2026-09-15T17:00:00Z", "2026-09-16T09:00:00Z"}},
+
+		// The value 32 is a plain value in every field except day of month,
+		// where it is cron4j's internal representation of "L": treating it as
+		// the sentinel everywhere silently drops minute 32.
+		{"minute_thirty_two", "32 * * * *", []string{
+			"2026-09-15T12:32:00Z", "2026-09-15T13:32:00Z", "2026-09-15T14:32:00Z"}},
+		{"minute_step_landing_on_thirty_two", "*/32 * * * *", []string{
+			"2026-09-15T12:32:00Z", "2026-09-15T13:00:00Z", "2026-09-15T13:32:00Z"}},
+		{"minute_and_hour_lists", "2,32 4,16 * * *", []string{
+			"2026-09-15T16:02:00Z", "2026-09-15T16:32:00Z", "2026-09-16T04:02:00Z"}},
+
+		// Day-of-month ranges, including a descending one and one built from "L".
+		{"day_wrapping_range", "0 0 31-1 * *", []string{
+			"2026-10-01T00:00:00Z", "2026-10-31T00:00:00Z", "2026-11-01T00:00:00Z"}},
+		{"day_range_from_last_day_token", "0 0 L-31 * *", []string{
+			"2026-09-16T00:00:00Z", "2026-09-17T00:00:00Z", "2026-09-18T00:00:00Z"}},
+		{"last_day_of_february", "0 0 L 2 *", []string{
+			"2027-02-28T00:00:00Z"}},
+		{"last_day_of_month_late", "31 23 L * *", []string{
+			"2026-09-30T23:31:00Z", "2026-10-31T23:31:00Z", "2026-11-30T23:31:00Z"}},
+		{"month_step", "0 0 1 */3 *", []string{
+			"2026-10-01T00:00:00Z", "2027-01-01T00:00:00Z", "2027-04-01T00:00:00Z"}},
+		{"month_and_day_list", "0 12 1 1,7 *", []string{
+			"2027-01-01T12:00:00Z", "2027-07-01T12:00:00Z"}},
+		{"day_name_list", "15 3 * * sun,wed,fri", []string{
+			"2026-09-16T03:15:00Z", "2026-09-18T03:15:00Z", "2026-09-20T03:15:00Z"}},
+		{"weekday_wrapping_range_saturday_to_sunday", "0 0 * * 6-0", []string{
+			"2026-09-19T00:00:00Z", "2026-09-20T00:00:00Z", "2026-09-26T00:00:00Z"}},
+
+		// "|" joins alternatives: the task fires at the earliest matching time.
+		{"alternatives", "0 0 * * * | 30 1 * * *", []string{
+			"2026-09-16T00:00:00Z", "2026-09-16T01:30:00Z", "2026-09-17T00:00:00Z"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			after := cronReferenceTime
+			for step, want := range tc.want {
+				got, err := nextFire(tc.schedule, after)
+				if err != nil {
+					t.Fatalf("nextFire(%q, %s) step %d: %v", tc.schedule, after.Format(time.RFC3339), step, err)
+				}
+				if formatted := got.UTC().Format(time.RFC3339); formatted != want {
+					t.Errorf("nextFire(%q, %s) step %d = %s; want %s (cron4j 2.2.5)",
+						tc.schedule, after.Format(time.RFC3339), step, formatted, want)
+				}
+				after = got
+			}
+		})
+	}
+}
+
+// TestNextFireForDurations covers the duration form of the same computation.
+func TestNextFireForDurations(t *testing.T) {
+	cases := []struct {
+		schedule string
+		interval time.Duration
+	}{
+		{"30s", 30 * time.Second},
+		{"1h", time.Hour},
+		{"90m", 90 * time.Minute},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.schedule, func(t *testing.T) {
+			got, err := nextFire(tc.schedule, cronReferenceTime)
+			if err != nil {
+				t.Fatalf("nextFire(%q, ...) error = %v", tc.schedule, err)
+			}
+			want := cronReferenceTime.Add(tc.interval)
+			if !got.Equal(want) {
+				t.Errorf("nextFire(%q, %s) = %s; want %s", tc.schedule, cronReferenceTime, got, want)
+			}
+		})
+	}
+}
+
+// TestNextFireForNeverMatchingPatternIsBounded pins the horizon: cron4j's own
+// Predictor spins forever on a pattern that cannot match, the scheduler must
+// report it instead.
+func TestNextFireForNeverMatchingPatternIsBounded(t *testing.T) {
+	// The schedule parses (day 30 and February are both valid values) but never
+	// matches, so it has no next fire time.
+	parsed, err := parseSchedule("0 0 30 feb *")
+	if err != nil {
+		t.Fatalf("parseSchedule(\"0 0 30 feb *\") error = %v; want it to parse", err)
+	}
+	if next, ok := parsed.next(cronReferenceTime); ok {
+		t.Errorf("parsed.next(%s) = %s, true; want no matching time", cronReferenceTime, next)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = nextFire("0 0 30 feb *", cronReferenceTime)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("nextFire on a never-matching pattern did not return within 5s; the search is unbounded")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// the seeded jobs
+// ---------------------------------------------------------------------------
+
+// TestSeedJobSchedulesAreHonored replaces the characterization test that pinned
+// the old mismatch: both rows shipped in migrations/001_legacy.up.sql carry cron
+// patterns (`* * * * *` and `*/30 * * * *`), which the scheduler now has to
+// parse - and they must compute the same fire times cron4j did.
+func TestSeedJobSchedulesAreHonored(t *testing.T) {
 	rows := loadSeedJobs(t)
 	if len(rows) != 2 {
 		t.Fatalf("len(seed tJobs rows) = %d; want 2", len(rows))
 	}
 
+	// The exact fire times cron4j 2.2.5 computes for the two seeded schedules,
+	// from the shared reference instant.
+	expectedNext := map[int64]string{
+		1: "2026-09-15T12:29:00Z", // '* * * * *'  - every minute on the minute
+		2: "2026-09-15T12:30:00Z", // '*/30 * * * *' - minutes 0 and 30
+	}
+
 	for _, row := range rows {
+		row := row
 		t.Run(fmt.Sprintf("job_%d", row.id), func(t *testing.T) {
 			if !row.enabled {
-				t.Skipf("seed job %d is disabled; the scheduler would not read it", row.id)
+				t.Fatalf("seed job %d is disabled; the scheduler would not read it", row.id)
 			}
-			dur, err := time.ParseDuration(row.schedule)
-			if err == nil {
-				t.Errorf("seed schedule %q for job %d parses as %v; this test pins the documented mismatch "+
-					"between cron seed data and the duration parser (scheduler.go:111) - update it if the "+
-					"seed data or the parser changed", row.schedule, row.id, dur)
-				return
+
+			parsed, err := parseSchedule(row.schedule)
+			if err != nil {
+				t.Fatalf("the scheduler rejects the seeded jobSchedule %q of job %d: %v", row.schedule, row.id, err)
 			}
-			t.Logf("BUG: seed job %d (%s) uses cron schedule %q, which time.ParseDuration rejects (%v); "+
-				"refreshJobs skips it at scheduler.go:111-115", row.id, row.class, row.schedule, err)
+			if !parsed.isCron() {
+				t.Fatalf("seeded jobSchedule %q of job %d parsed as %s; want a cron pattern",
+					row.schedule, row.id, parsed.describe())
+			}
+
+			next, err := nextFire(row.schedule, cronReferenceTime)
+			if err != nil {
+				t.Fatalf("nextFire(%q, %s) error = %v", row.schedule, cronReferenceTime, err)
+			}
+			want, ok := expectedNext[row.id]
+			if !ok {
+				t.Fatalf("no expected fire time recorded for seed job %d", row.id)
+			}
+			if got := next.UTC().Format(time.RFC3339); got != want {
+				t.Errorf("nextFire(%q) = %s; want %s (cron4j 2.2.5)", row.schedule, got, want)
+			}
+			if next.Second() != 0 {
+				t.Errorf("nextFire(%q) = %s; want a fire time aligned to the minute", row.schedule, next)
+			}
 		})
 	}
 }
 
-// TestSeedEligibilityJobClassDoesNotResolve pins the typo in the seeded class
-// name: tJobs row 2 says "org.remitt.server.tasks.EligibiltyTask", but the
-// dispatch table only knows "org.remitt.server.tasks.EligibilityTask"
-// (task/eligibility.go:17, scheduler.go:180-182).
-//
-// BUG (seed data, migrations/001_legacy.up.sql:353): even with a cron-capable
-// schedule parser the seeded eligibility job would log "Unknown job class".
-// Characterization test: update it when the seed data is fixed.
-func TestSeedEligibilityJobClassDoesNotResolve(t *testing.T) {
-	s := NewScheduler()
+// TestSeedJobClassMigrationFixesTheTypo covers the data fix: the seeded class
+// name is misspelled, the Go dispatch table (and the Java class) spell it
+// correctly, and migrations/002_fix_seed_job_class.up.sql has to rewrite the
+// stored value to the correct spelling - with a down migration that restores it.
+func TestSeedJobClassMigrationFixesTheTypo(t *testing.T) {
+	seeds := loadSeedJobs(t)
+	up := loadJobClassFix(t, "002_fix_seed_job_class.up.sql")
+	down := loadJobClassFix(t, "002_fix_seed_job_class.down.sql")
 
-	var candidate *seedJobRow
-	for _, row := range loadSeedJobs(t) {
-		if row.class != ScooperJobClass && strings.HasSuffix(row.class, "Task") {
-			r := row
-			candidate = &r
-			break
+	if up.from != seededTypoClass {
+		t.Errorf("the up migration rewrites %q; want the seeded misspelling %q", up.from, seededTypoClass)
+	}
+	if up.to != EligibilityJobClass {
+		t.Errorf("the up migration rewrites to %q; want EligibilityJobClass (%q)", up.to, EligibilityJobClass)
+	}
+	if down.from != up.to || down.to != up.from {
+		t.Errorf("the down migration (%q -> %q) does not reverse the up migration (%q -> %q)",
+			down.from, down.to, up.from, up.to)
+	}
+
+	// The seeds really do carry the misspelling; otherwise this test proves
+	// nothing about the migration.
+	typoRows := 0
+	for _, row := range seeds {
+		if row.class == seededTypoClass {
+			typoRows++
 		}
 	}
-	if candidate == nil {
-		t.Skip("no non-scooper task row found in the tJobs seed data")
+	if typoRows == 0 {
+		t.Fatalf("no seeded tJobs row carries the misspelled class %q; the migration under test fixes nothing", seededTypoClass)
 	}
 
-	if runner := s.resolveRunner(candidate.class); runner != nil {
-		t.Errorf("the seeded class %q now resolves to a runner; the seed typo was fixed - update this test",
-			candidate.class)
-		return
+	s := NewScheduler()
+	for _, row := range seeds {
+		if !strings.HasSuffix(row.class, "Task") {
+			continue
+		}
+		if s.resolveRunner(row.class) == nil && row.class != seededTypoClass {
+			t.Errorf("seeded job %d already has an unresolvable class %q; the seed data drifted", row.id, row.class)
+		}
 	}
-	t.Logf("BUG: seeded class %q for job %d does not match EligibilityJobClass (%q); "+
-		"refreshJobs logs \"Unknown job class\" for it (scheduler.go:105-109)",
-		candidate.class, candidate.id, EligibilityJobClass)
 
-	if runner := s.resolveRunner(EligibilityJobClass); runner == nil {
-		t.Errorf("resolveRunner(%q) = nil; the dispatch table lost the eligibility task", EligibilityJobClass)
+	fixed := applyJobClassFix(seeds, up)
+	for _, row := range fixed {
+		if !strings.HasSuffix(row.class, "Task") {
+			continue
+		}
+		if s.resolveRunner(row.class) == nil {
+			t.Errorf("after the migration seeded job %d still has no runner for class %q", row.id, row.class)
+		}
+	}
+
+	if restored := applyJobClassFix(fixed, down); !reflect.DeepEqual(restored, seeds) {
+		t.Errorf("applying the down migration to the fixed rows gives %v; want the seeded rows %v", restored, seeds)
+	}
+
+	// No fuzzy matching was added: the misspelling still resolves to nothing.
+	if s.resolveRunner(seededTypoClass) != nil {
+		t.Errorf("resolveRunner(%q) resolved a runner; the typo must be fixed in data, not by loosening the lookup", seededTypoClass)
+	}
+}
+
+// TestSeededJobsStartAfterTheMigrationFix is the end-to-end form: the seeded
+// rows, with the class fix applied, must all start as tasks, with no rejection
+// reported by refreshJobs.
+func TestSeededJobsStartAfterTheMigrationFix(t *testing.T) {
+	seeds := loadSeedJobs(t)
+	fixed := applyJobClassFix(seeds, loadJobClassFix(t, "002_fix_seed_job_class.up.sql"))
+
+	f := newSchedulerFixture(t)
+	rows := make([][]driver.Value, 0, len(fixed))
+	for _, row := range fixed {
+		rows = append(rows, jobRow(row.id, row.schedule, row.class, row.enabled))
+	}
+	f.src.setJobs(rows...)
+
+	if err := f.s.refreshJobs(); err != nil {
+		t.Fatalf("refreshJobs() with the fixed seed rows = %v; want no rejected rows", err)
+	}
+	if got := f.taskCount(); got != 2 {
+		t.Fatalf("len(s.tasks) = %d after loading the fixed seed rows; want 2 (both seeded jobs scheduled)", got)
+	}
+
+	for _, row := range fixed {
+		st := f.task(row.id)
+		if st == nil {
+			t.Fatalf("seeded job %d was not started", row.id)
+		}
+		if st.runner == nil {
+			t.Errorf("seeded job %d started with a nil runner", row.id)
+		}
+		if st.schedule == nil || !st.schedule.isCron() {
+			t.Errorf("seeded job %d started with schedule %q, which did not parse as a cron pattern", row.id, st.Schedule)
+		}
+		if st.stopCh == nil {
+			t.Errorf("seeded job %d started without a stop channel", row.id)
+		}
+	}
+}
+
+// TestSeededJobsBeforeTheFixAreReportedNotRun is the other half: the unfixed
+// seed data (the misspelled class) must be reported loudly, not scheduled, and
+// the row that is fine must still start.
+func TestSeededJobsBeforeTheFixAreReportedNotRun(t *testing.T) {
+	seeds := loadSeedJobs(t)
+
+	f := newSchedulerFixture(t)
+	rows := make([][]driver.Value, 0, len(seeds))
+	for _, row := range seeds {
+		rows = append(rows, jobRow(row.id, row.schedule, row.class, row.enabled))
+	}
+	f.src.setJobs(rows...)
+
+	err := f.s.refreshJobs()
+	if err == nil {
+		t.Fatal("refreshJobs() on the unfixed seed rows = nil; want the misspelled class reported as a rejection")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "unknown job class") {
+		t.Errorf("refreshJobs() error = %q; want it to report an unknown job class", msg)
+	}
+	if !strings.Contains(msg, seededTypoClass) {
+		t.Errorf("refreshJobs() error = %q; want it to name the misspelled class %q", msg, seededTypoClass)
+	}
+	if !strings.Contains(msg, EligibilityJobClass) {
+		t.Errorf("refreshJobs() error = %q; want it to list the registered classes", msg)
+	}
+
+	// The correctly spelled ScooperTask row is unaffected.
+	if f.task(1) == nil {
+		t.Error("the correctly spelled seeded job 1 was not started")
+	}
+	if _, ok := func() (*scheduledTask, bool) {
+		f.s.mu.Lock()
+		defer f.s.mu.Unlock()
+		st, ok := f.s.tasks[2]
+		return st, ok
+	}(); ok {
+		t.Error("the misspelled seeded job 2 was started; an unresolvable class must not schedule anything")
 	}
 }
 
 // ---------------------------------------------------------------------------
-// pure logic: the runTask tick loop and the stop path
+// the run loops
 // ---------------------------------------------------------------------------
 
-// TestRunTaskRunsImmediatelyAndOnEveryTick exercises the tick loop with an
-// injected runner, so no database is involved.
-func TestRunTaskRunsImmediatelyAndOnEveryTick(t *testing.T) {
+// TestRunTaskDurationRunsImmediatelyAndOnEveryTick exercises the duration loop
+// with an injected runner, so no database is involved.
+func TestRunTaskDurationRunsImmediatelyAndOnEveryTick(t *testing.T) {
 	s := NewScheduler()
-	g := newLoopGuard()
 
 	var calls atomic.Int64
-	st := &scheduledTask{
-		ID:       1,
-		Schedule: "5ms",
-		Class:    ScooperJobClass,
-		runner:   func() error { calls.Add(1); return nil },
-		stopCh:   make(chan struct{}),
+	st, err := newScheduledTask(1, "5ms", ScooperJobClass, func() error { calls.Add(1); return nil })
+	if err != nil {
+		t.Fatalf("newScheduledTask: %v", err)
 	}
-	done := startRunTask(s, st, 5*time.Millisecond)
-	defer func() {
-		if !g.retire(t, s, st, done, 2*time.Second) {
-			t.Errorf("task 1 did not return after stop; the tick loop leaked")
-		}
-	}()
+	done := startRunTask(s, st)
+	defer stopAndWait(t, s, st, done, 2*time.Second)
 
 	if !waitFor(2*time.Second, func() bool { return calls.Load() >= 1 }) {
-		t.Fatal("the runner was never invoked; runTask does not run once immediately (scheduler.go:145)")
+		t.Fatal("the runner was never invoked; a duration schedule runs once immediately")
 	}
 	if !waitFor(2*time.Second, func() bool { return calls.Load() >= 3 }) {
 		t.Fatalf("runner calls after ~2s at a 5ms interval = %d; want at least 3", calls.Load())
@@ -628,71 +1034,158 @@ func TestRunTaskRunsImmediatelyAndOnEveryTick(t *testing.T) {
 }
 
 // TestRunTaskKeepsTickingAfterRunnerError checks that a failing runner does not
-// abort the tick loop: the error is logged (scheduler.go:146/153) and the loop
-// keeps ticking.
+// abort the duration loop: the error is logged and the loop keeps ticking.
 func TestRunTaskKeepsTickingAfterRunnerError(t *testing.T) {
 	s := NewScheduler()
-	g := newLoopGuard()
 
 	var calls atomic.Int64
-	st := &scheduledTask{
-		ID:       7,
-		Schedule: "5ms",
-		Class:    EligibilityJobClass,
-		runner:   func() error { calls.Add(1); return fmt.Errorf("injected failure") },
-		stopCh:   make(chan struct{}),
+	st, err := newScheduledTask(7, "5ms", EligibilityJobClass, func() error {
+		calls.Add(1)
+		return fmt.Errorf("injected failure")
+	})
+	if err != nil {
+		t.Fatalf("newScheduledTask: %v", err)
 	}
-	done := startRunTask(s, st, 5*time.Millisecond)
-	defer func() {
-		if !g.retire(t, s, st, done, 2*time.Second) {
-			t.Errorf("task 7 did not return after stop; the tick loop leaked")
-		}
-	}()
+	done := startRunTask(s, st)
+	defer stopAndWait(t, s, st, done, 2*time.Second)
 
 	if !waitFor(2*time.Second, func() bool { return calls.Load() >= 3 }) {
-		t.Fatalf("a failing runner stopped the tick loop after %d call(s); want it to keep ticking", calls.Load())
+		t.Fatalf("a failing runner stopped the loop after %d call(s); want it to keep ticking", calls.Load())
 	}
 }
 
-// TestStopTaskDropsSignalWhileRunnerIsBusy is the minimal reproduction for the
-// stop-path defect.
+// TestRunTaskCronFiresOnThePatternsWallClockMinute is the end-to-end cron tick
+// test. The task's clock is injected so the test does not sleep on real minutes:
+// the fake clock reports the reference wall-clock time plus however long the
+// test has actually been running, so the pattern's next fire time (12:01:00) is
+// ~800ms of real time away.
 //
-// BUG (task/scheduler.go:163-169): stopTask uses a non-blocking send on an
-// unbuffered channel; when the runTask goroutine is not parked in its select -
-// i.e. whenever the runner is executing, which for a real task is the whole
-// point - the send takes the default branch and the stop request is silently
-// discarded. The task then runs forever.
-//
-// Reproduction (this test): start runTask with a runner that blocks, call
-// stopTask while the goroutine is inside the runner, release the runner, and
-// observe that the tick loop keeps running instead of returning.
-// Characterization test: if stopTask is made reliable (buffered channel, close,
-// or context), update this test.
-func TestStopTaskDropsSignalWhileRunnerIsBusy(t *testing.T) {
+// The assertion that matters is the timestamp the runner observes: it has to be
+// the pattern's minute boundary, which is what "fires on wall-clock boundaries"
+// means and what running immediately (as a duration schedule does) would not
+// produce.
+func TestRunTaskCronFiresOnThePatternsWallClockMinute(t *testing.T) {
 	s := NewScheduler()
-	g := newLoopGuard()
+
+	// 12:00:59.2 -> the next matching minute of "* * * * *" is 12:01:00.
+	base := time.Date(2026, 9, 15, 12, 0, 59, 200_000_000, time.UTC)
+	started := time.Now()
+
+	var (
+		st    *scheduledTask
+		err   error
+		fires = make(chan time.Time, 4)
+	)
+	st, err = newScheduledTask(21, "* * * * *", ScooperJobClass, func() error {
+		fires <- st.now()
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("newScheduledTask: %v", err)
+	}
+	// The fake clock advances with real time, so the loop's wait is real but the
+	// fire time it computes is the pattern's.
+	st.clock = func() time.Time { return base.Add(time.Since(started)) }
+
+	done := startRunTask(s, st)
+	defer stopAndWait(t, s, st, done, 2*time.Second)
+
+	// cron4j waits for the next matching minute: nothing may run before it.
+	select {
+	case <-time.After(250 * time.Millisecond):
+	case got := <-fires:
+		t.Fatalf("the cron task ran at %s before its first matching minute (12:01:00); a cron schedule must not run at start-up", got)
+	}
+	if len(fires) != 0 {
+		t.Fatalf("the cron task ran %d time(s) before its first matching minute", len(fires))
+	}
+
+	var first time.Time
+	select {
+	case first = <-fires:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the cron task did not run within 3s (its first fire time was ~800ms away)")
+	}
+
+	// The runner's clock is the advancing fake clock, so it observes the fire
+	// time plus however long the timer overshot; the assertion is on the minute
+	// the pattern selected. Firing before that minute (e.g. at start-up) would
+	// truncate to an earlier minute and fail.
+	want := time.Date(2026, 9, 15, 12, 1, 0, 0, time.UTC)
+	if got := first.Truncate(time.Minute); !got.Equal(want) {
+		t.Errorf("the cron task ran at %s (minute %s); want the pattern's fire time %s",
+			first.Format(time.RFC3339Nano), got.Format(time.RFC3339), want.Format(time.RFC3339))
+	}
+}
+
+// TestRunTaskRejectsNonPositiveInterval pins the interval guard. A zero or
+// negative interval used to reach time.NewTicker, which panics - and because
+// runTask is started with `go`, that panic killed the process. It must log and
+// return instead.
+func TestRunTaskRejectsNonPositiveInterval(t *testing.T) {
+	cases := []struct {
+		name     string
+		schedule string
+		interval time.Duration
+	}{
+		{"zero", "0s", 0},
+		{"negative", "-5m", -5 * time.Minute},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// The schedule parser rejects these values outright...
+			if _, err := parseSchedule(tc.schedule); err == nil {
+				t.Errorf("parseSchedule(%q) = nil error; want a rejection at the boundary", tc.schedule)
+			}
+
+			// ...and a task built by hand with such an interval must not panic
+			// inside runTask either (defence in depth: a panic in this goroutine
+			// is unrecoverable for the process).
+			s := NewScheduler()
+			ran := false
+			st := &scheduledTask{
+				ID:       3,
+				Schedule: tc.schedule,
+				Class:    ScooperJobClass,
+				runner:   func() error { ran = true; return nil },
+				schedule: &parsedSchedule{raw: tc.schedule, interval: tc.interval},
+				stopCh:   make(chan struct{}),
+			}
+
+			done := startRunTask(s, st)
+			select {
+			case <-done:
+			case <-time.After(2 * time.Second):
+				t.Fatalf("runTask with interval %s did not return; it is blocking instead of rejecting", tc.interval)
+			}
+			if ran {
+				t.Errorf("runTask ran the task with a non-positive interval %s", tc.interval)
+			}
+		})
+	}
+}
+
+// TestStopTaskIsDeliveredWhileRunnerIsBusy is the stop-path regression test: the
+// stop request used to be a non-blocking send on an unbuffered channel, so it
+// was dropped whenever the runner was executing - which for a real task is most
+// of the time - and the task ran forever.
+func TestStopTaskIsDeliveredWhileRunnerIsBusy(t *testing.T) {
+	s := NewScheduler()
 
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	var enteredOnce sync.Once
 
-	st := &scheduledTask{
-		ID:       99,
-		Schedule: "1h",
-		Class:    ScooperJobClass,
-		runner: func() error {
-			enteredOnce.Do(func() { close(entered) })
-			<-release // hold the goroutine inside the runner
-			return nil
-		},
-		stopCh: make(chan struct{}),
+	st, err := newScheduledTask(99, "1h", ScooperJobClass, func() error {
+		enteredOnce.Do(func() { close(entered) })
+		<-release // hold the goroutine inside the runner
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("newScheduledTask: %v", err)
 	}
-	done := startRunTask(s, st, time.Hour)
-	defer func() {
-		if !g.retire(t, s, st, done, 2*time.Second) {
-			t.Errorf("task 99 did not return at all; the stop path is unrecoverable")
-		}
-	}()
+	done := startRunTask(s, st)
 
 	select {
 	case <-entered:
@@ -700,120 +1193,176 @@ func TestStopTaskDropsSignalWhileRunnerIsBusy(t *testing.T) {
 		t.Fatal("the runner was never invoked; runTask did not start")
 	}
 
-	// The goroutine is inside the runner, so no receiver is waiting and the send
-	// cannot be delivered.
+	// The goroutine is inside the runner, so no receiver is waiting; the request
+	// still has to be recorded.
 	begin := time.Now()
 	s.stopTask(st)
 	if elapsed := time.Since(begin); elapsed > 100*time.Millisecond {
-		t.Errorf("stopTask blocked for %s; it is a non-blocking send", elapsed)
+		t.Errorf("stopTask blocked for %s; it must not block on the runner", elapsed)
+	}
+	if !st.stopped() {
+		t.Error("the stop request made while the runner was busy was dropped")
 	}
 
 	close(release)
 
-	// The discarded signal means the loop blocks in its select even though the
-	// runner has returned.
-	if waitFor(300*time.Millisecond, func() bool { return doneClosed(done) }) {
-		t.Errorf("the stop request was honoured while the runner was busy; the drop at scheduler.go:163 no "+
-			"longer reproduces - update this test (task %d, class %s)", st.ID, st.Class)
-		return
-	}
-
-	t.Logf("BUG: task 99 is still ticking 300ms after a stop request made while its runner was running " +
-		"(unbuffered stopCh + non-blocking send, scheduler.go:163-169); the request is only honoured if a " +
-		"later call happens to find the goroutine parked in the select")
-
-	// Deterministic cleanup: the goroutine is parked in the select now, so this
-	// send is received.
-	if !g.retire(t, s, st, done, 2*time.Second) {
-		t.Fatalf("task 99 could not be stopped even while parked in its select")
+	// Once the runner returns, the loop has to notice and exit: it may not wait
+	// for a tick or for a second stop request.
+	if !waitFor(2*time.Second, func() bool { return doneClosed(done) }) {
+		t.Fatal("the task kept running after a stop request made while its runner was executing")
 	}
 }
 
-// TestStopIsNotIdempotent pins the lifecycle defect in Stop.
-//
-// BUG (task/scheduler.go:62-64): Stop closes stopCh unconditionally, so a second
-// call panics with "close of closed channel"; a scheduler stopped twice crashes
-// its caller. In addition, because the channel is never recreated, a Start after
-// a Stop keeps using the closed channel and its ticker goroutine exits on the
-// first iteration (scheduler.go:43-58).
-// Characterization test: if Stop becomes idempotent, update this test.
-func TestStopIsNotIdempotent(t *testing.T) {
-	s := NewScheduler()
-	s.Stop()
+// TestStopIsIdempotentAndRestartable covers the scheduler lifecycle: Stop used
+// to close its channel unconditionally, so a second call panicked with "close of
+// closed channel", and a Start after a Stop kept using the closed channel.
+func TestStopIsIdempotentAndRestartable(t *testing.T) {
+	f := newSchedulerFixture(t)
+	f.src.setJobs(jobRow(1, "1h", ScooperJobClass, true))
 
-	var recovered any
-	func() {
-		defer func() { recovered = recover() }()
-		s.Stop()
-	}()
-
-	if recovered == nil {
-		t.Errorf("second Stop() did not panic; Stop is idempotent now - update this test")
-		return
+	// Stop before Start does nothing and must not panic.
+	f.s.Stop()
+	if f.running() {
+		t.Error("Stop() before Start() left the scheduler marked running")
 	}
-	t.Logf("BUG: a second Stop() panics with %v (scheduler.go:63 closes stopCh unconditionally)", recovered)
+
+	f.s.Start()
+	if !f.running() {
+		t.Error("Start() did not mark the scheduler running")
+	}
+	if f.ticker() == nil {
+		t.Error("Start() did not install the refresh ticker")
+	}
+
+	f.s.Stop()
+	if f.running() {
+		t.Error("Stop() left the scheduler marked running")
+	}
+	if f.ticker() != nil {
+		t.Error("Stop() left the refresh ticker installed")
+	}
+
+	// A second Stop is a no-op (this used to panic).
+	f.s.Stop()
+	f.s.Stop()
+
+	// The scheduler is restartable: Start must build a fresh lifecycle rather
+	// than reuse the closed stop channel, which would kill the loop instantly.
+	f.s.Start()
+	if !f.running() {
+		t.Fatal("Start() after Stop() did not restart the scheduler")
+	}
+	firstTicker := f.ticker()
+	if firstTicker == nil {
+		t.Fatal("Start() after Stop() did not install a refresh ticker")
+	}
+
+	// The restarted loop must still be alive: a scheduler whose stop channel was
+	// reused would have exited on its first iteration.
+	time.Sleep(50 * time.Millisecond)
+	if !f.running() {
+		t.Error("the restarted scheduler loop exited on its own")
+	}
+	if f.ticker() == nil {
+		t.Error("the restarted scheduler dropped its ticker")
+	}
+
+	f.s.Stop()
 }
 
-// TestRunTaskPanicsOnNonPositiveInterval is the minimal reproduction for the
-// interval-validation defect.
-//
-// BUG (task/scheduler.go:111 + scheduler.go:141 + scheduler.go:125):
-// refreshJobs validates jobSchedule with time.ParseDuration only, which accepts
-// "0", "0s" and negative durations; the accepted value is handed to
-// time.NewTicker inside runTask, which panics on a non-positive interval. In
-// production runTask is started with `go` from refreshJobs, and a panic in a
-// goroutine cannot be recovered by the caller - the whole server process dies. A
-// single tJobs row with jobSchedule '0s' (or '-5m') is enough.
-// Characterization test: if a positive-duration check is added, update this test.
-func TestRunTaskPanicsOnNonPositiveInterval(t *testing.T) {
-	cases := []struct {
-		name     string
-		schedule string
-	}{
-		{"zero_seconds", "0s"},
-		{"zero_bare", "0"},
-		{"negative", "-5m"},
+// TestRefreshJobsAfterStopDoesNotResurrectTasks covers the other half of the
+// lifecycle: a stopped scheduler must not start new tasks, because nothing would
+// ever stop them, and a restart must schedule again.
+func TestRefreshJobsAfterStopDoesNotResurrectTasks(t *testing.T) {
+	f := newSchedulerFixture(t)
+	f.src.setJobs(jobRow(1, "1h", ScooperJobClass, true))
+
+	f.s.Start()
+	f.s.Stop()
+
+	f.src.setJobs(
+		jobRow(1, "1h", ScooperJobClass, true),
+		jobRow(2, "1h", ScooperJobClass, true),
+	)
+	err := f.s.refreshJobs()
+	if err == nil {
+		t.Fatal("refreshJobs() on a stopped scheduler = nil; want it to refuse to start tasks")
+	}
+	if !strings.Contains(err.Error(), "scheduler is stopped") {
+		t.Errorf("refreshJobs() on a stopped scheduler = %q; want it to say the scheduler is stopped", err.Error())
+	}
+	if f.task(2) != nil {
+		t.Error("refreshJobs started task 2 on a stopped scheduler; nothing would stop it")
 	}
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			// The scheduler accepts the schedule string as a valid duration...
-			dur, err := time.ParseDuration(tc.schedule)
-			if err != nil {
-				t.Fatalf("time.ParseDuration(%q) error = %v; the premise of this reproduction failed", tc.schedule, err)
-			}
-			if dur > 0 {
-				t.Fatalf("time.ParseDuration(%q) = %v (positive); this reproduction needs a non-positive interval", tc.schedule, dur)
-			}
+	// A restarted scheduler schedules again.
+	f.s.Start()
+	if err := f.s.refreshJobs(); err != nil {
+		t.Fatalf("refreshJobs() after a restart = %v; want nil", err)
+	}
+	if f.task(2) == nil {
+		t.Error("job 2 was not started after the scheduler was restarted")
+	}
+	f.s.Stop()
+}
 
-			// ...and runTask then panics inside time.NewTicker.
-			s := NewScheduler()
-			st := &scheduledTask{
-				ID:       3,
-				Schedule: tc.schedule,
-				Class:    ScooperJobClass,
-				runner:   func() error { return nil },
-				stopCh:   make(chan struct{}),
-			}
+// TestStartIsIdempotentWhileRunning pins that a second Start does not replace
+// the running loop's ticker (which used to be an unsynchronised field write
+// racing the loop's read) and does not start a second loop.
+func TestStartIsIdempotentWhileRunning(t *testing.T) {
+	f := newSchedulerFixture(t)
+	f.src.setJobs(jobRow(1, "1h", ScooperJobClass, true))
 
-			var recovered any
-			func() {
-				defer func() { recovered = recover() }()
-				s.runTask(st, dur)
-			}()
+	f.s.Start()
+	first := f.ticker()
+	if first == nil {
+		t.Fatal("Start() did not install a refresh ticker")
+	}
 
-			if recovered == nil {
-				t.Errorf("runTask with interval %v did not panic; the interval check was added - update this test", dur)
-				return
-			}
-			// time.NewTicker panics with a plain string, not a runtime.Error.
-			if msg := fmt.Sprint(recovered); !strings.Contains(msg, "non-positive interval") {
-				t.Errorf("runTask panicked with %T (%v); want time.NewTicker's non-positive-interval panic", recovered, recovered)
-			}
-			t.Logf("BUG: runTask(%q -> %v) panics with %v at time.NewTicker (scheduler.go:141); launched from "+
-				"scheduler.go:125 `go s.runTask(...)` it is an unrecoverable panic that kills the process",
-				tc.schedule, dur, recovered)
-		})
+	f.s.Start() // must be ignored
+	if second := f.ticker(); second != first {
+		t.Errorf("a second Start() while running replaced the ticker (%p -> %p); it must be a no-op", first, second)
+	}
+	if !f.running() {
+		t.Error("the scheduler is no longer running after a duplicate Start()")
+	}
+
+	f.s.Stop()
+}
+
+// TestSchedulerStartStopNoRace cycles the lifecycle concurrently with the task
+// it starts, so `go test -race` covers the ticker field and the task map. The
+// double-Start form of this used to be a data race on s.ticker.
+func TestSchedulerStartStopNoRace(t *testing.T) {
+	f := newSchedulerFixture(t)
+	f.src.setJobs(
+		jobRow(1, "* * * * *", ScooperJobClass, true),
+		jobRow(2, "1h", ScooperJobClass, true),
+	)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			f.s.Start()
+			f.s.Stop()
+		}()
+	}
+
+	finished := make(chan struct{})
+	go func() { wg.Wait(); close(finished) }()
+	select {
+	case <-finished:
+	case <-time.After(10 * time.Second):
+		t.Fatal("concurrent Start/Stop cycles did not finish within 10s")
+	}
+
+	// Leave the scheduler stopped, and prove a fourth cycle still works.
+	f.s.Start()
+	f.s.Stop()
+	if f.running() {
+		t.Error("the scheduler is still marked running after the final Stop()")
 	}
 }
 
@@ -822,88 +1371,145 @@ func TestRunTaskPanicsOnNonPositiveInterval(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestRefreshJobsDispatchesFromFakeJobSource drives the real refreshJobs against
-// an in-memory tJobs source (see installFakeJobs) and asserts the dispatch
-// rules: known class + valid duration starts a task; unknown class is skipped;
-// a schedule the parser rejects is skipped before any runner starts.
+// an in-memory tJobs source and asserts the dispatch rules: a known class with a
+// usable schedule (duration or cron) starts a task; an unknown class, an empty
+// schedule and an unparseable one are rejected with a named reason and scheduled
+// nothing.
 func TestRefreshJobsDispatchesFromFakeJobSource(t *testing.T) {
 	f := newSchedulerFixture(t)
 
 	f.src.setJobs(
-		jobRow(1, "1h", ScooperJobClass, true),                          // startable
-		jobRow(2, "1h", "com.example.NoSuchTask", true),                 // unknown class
-		jobRow(3, "*/30 * * * *", EligibilityJobClass, true),            // cron, not a duration
-		jobRow(4, "", EligibilityJobClass, true),                        // empty schedule
-		jobRow(5, "1h", "org.remitt.server.tasks.EligibiltyTask", true), // seeded typo
+		jobRow(1, "1h", ScooperJobClass, true),                                 // duration schedule
+		jobRow(2, "1h", "com.example.NoSuchTask", true),                        // unknown class
+		jobRow(3, "*/30 * * * *", EligibilityJobClass, true),                   // cron, the seeded form
+		jobRow(4, "", EligibilityJobClass, true),                               // empty schedule
+		jobRow(5, "5 minutes", "org.remitt.server.tasks.EligibiltyTask", true), // seeded typo class
 	)
-	f.s.refreshJobs()
 
-	if got := len(f.s.tasks); got != 1 {
-		t.Fatalf("len(s.tasks) = %d; want 1: only job 1 has a known class and a duration schedule "+
-			"(scheduler.go:105-115)", got)
+	err := f.s.refreshJobs()
+	if err == nil {
+		t.Fatal("refreshJobs() = nil; want the three rejected rows reported")
+	}
+	msg := err.Error()
+	for _, want := range []string{"3 job(s) rejected", "NoSuchTask", "jobSchedule", "unknown job class"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("refreshJobs() error = %q; want it to mention %q", msg, want)
+		}
 	}
 
-	st := f.task(1)
-	if st == nil {
-		t.Fatal("job 1 was not started")
+	if got := f.taskCount(); got != 2 {
+		t.Fatalf("len(s.tasks) = %d; want 2: jobs 1 (duration) and 3 (cron) are schedulable", got)
 	}
-	if st.Schedule != "1h" {
-		t.Errorf("task 1 Schedule = %q; want %q", st.Schedule, "1h")
+
+	for _, id := range []int64{2, 4, 5} {
+		f.s.mu.Lock()
+		_, ok := f.s.tasks[id]
+		f.s.mu.Unlock()
+		if ok {
+			t.Errorf("job %d was started; want it rejected (unknown class or unusable schedule)", id)
+		}
 	}
-	if st.Class != ScooperJobClass {
-		t.Errorf("task 1 Class = %q; want %q", st.Class, ScooperJobClass)
+
+	durationTask := f.task(1)
+	if durationTask == nil {
+		t.Fatal("job 1 (duration schedule) was not started")
 	}
-	if st.runner == nil {
+	if durationTask.Schedule != "1h" || durationTask.Class != ScooperJobClass {
+		t.Errorf("task 1 = {Schedule: %q, Class: %q}; want {Schedule: \"1h\", Class: %q}",
+			durationTask.Schedule, durationTask.Class, ScooperJobClass)
+	}
+	if durationTask.runner == nil {
 		t.Error("task 1 runner is nil; refreshJobs stored an unresolvable runner")
 	}
-	if st.stopCh == nil {
+	if durationTask.stopCh == nil {
 		t.Error("task 1 stopCh is nil; the task could never be stopped")
 	}
 
-	for _, id := range []int64{2, 3, 4, 5} {
-		if _, ok := f.s.tasks[id]; ok {
-			t.Errorf("job %d was started; want it skipped (unknown class or unparseable schedule)", id)
-		}
+	cronTask := f.task(3)
+	if cronTask == nil {
+		t.Fatal("job 3 (cron schedule) was not started")
+	}
+	if cronTask.schedule == nil || !cronTask.schedule.isCron() {
+		t.Fatalf("task 3 schedule %q was not parsed as a cron pattern", cronTask.Schedule)
+	}
+	if cronTask.runner == nil {
+		t.Error("task 3 runner is nil; refreshJobs stored an unresolvable runner")
+	}
+	if next, ok := cronTask.schedule.pattern.next(time.Now()); !ok || next.Before(time.Now()) {
+		t.Errorf("task 3 has no future fire time (%s, ok=%v)", next, ok)
 	}
 }
 
-// TestRefreshJobsIsIdempotentForUnchangedSchedule covers the "No change" branch
-// (scheduler.go:99-101): re-reading the same row must not restart the task.
+// TestRefreshJobsReportsRejectedScheduleReasons checks the log-worthy detail in
+// the returned error: a rejected row must say which value was rejected and why.
+func TestRefreshJobsReportsRejectedScheduleReasons(t *testing.T) {
+	f := newSchedulerFixture(t)
+	f.src.setJobs(
+		jobRow(1, "*/0 * * * *", ScooperJobClass, true),
+		jobRow(2, "0 0 30 feb *", ScooperJobClass, true),
+		jobRow(3, "0s", ScooperJobClass, true),
+	)
+
+	err := f.s.refreshJobs()
+	if err == nil {
+		t.Fatal("refreshJobs() = nil; want all three unusable schedules reported")
+	}
+	msg := err.Error()
+	for _, want := range []string{"step must be >= 1", "no matching time within", "non-positive duration", "rejecting unusable jobSchedule"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("refreshJobs() error = %q; want it to mention %q", msg, want)
+		}
+	}
+	if got := f.taskCount(); got != 0 {
+		t.Errorf("len(s.tasks) = %d; want 0 (every row was rejected)", got)
+	}
+}
+
+// TestRefreshJobsIsIdempotentForUnchangedSchedule covers the "No change" branch:
+// re-reading the same row must not restart the task.
 func TestRefreshJobsIsIdempotentForUnchangedSchedule(t *testing.T) {
 	f := newSchedulerFixture(t)
-	f.src.setJobs(jobRow(1, "1h", ScooperJobClass, true))
+	f.src.setJobs(jobRow(1, "*/30 * * * *", ScooperJobClass, true))
 
-	f.s.refreshJobs()
+	if err := f.s.refreshJobs(); err != nil {
+		t.Fatalf("refreshJobs() = %v; want nil", err)
+	}
 	first := f.task(1)
 	if first == nil {
 		t.Fatal("job 1 was not started")
 	}
 
-	f.s.refreshJobs()
-	if got := len(f.s.tasks); got != 1 {
+	if err := f.s.refreshJobs(); err != nil {
+		t.Fatalf("second refreshJobs() = %v; want nil", err)
+	}
+	if got := f.taskCount(); got != 1 {
 		t.Fatalf("len(s.tasks) = %d after a second refresh; want 1", got)
 	}
-	if second := f.s.tasks[1]; second != first {
-		t.Error("refreshJobs restarted an unchanged job (task pointer changed); scheduler.go:99-101 should have " +
-			"taken the no-change branch")
+	if second := f.task(1); second != first {
+		t.Error("refreshJobs restarted an unchanged job (task pointer changed)")
 	}
 }
 
-// TestRefreshJobsRestartsTaskWhenScheduleChanges covers scheduler.go:93-101: a
+// TestRefreshJobsRestartsTaskWhenScheduleChanges covers the change branch: a
 // changed jobSchedule retires the old task and starts a new one.
 func TestRefreshJobsRestartsTaskWhenScheduleChanges(t *testing.T) {
 	f := newSchedulerFixture(t)
 	f.src.setJobs(jobRow(1, "1h", ScooperJobClass, true))
 
-	f.s.refreshJobs()
+	if err := f.s.refreshJobs(); err != nil {
+		t.Fatalf("refreshJobs() = %v; want nil", err)
+	}
 	first := f.task(1)
 	if first == nil {
 		t.Fatal("job 1 was not started")
 	}
 
-	f.src.setJobs(jobRow(1, "2h", ScooperJobClass, true))
-	f.s.refreshJobs()
+	f.src.setJobs(jobRow(1, "*/30 * * * *", ScooperJobClass, true))
+	if err := f.s.refreshJobs(); err != nil {
+		t.Fatalf("refreshJobs() after the schedule change = %v; want nil", err)
+	}
 
-	if got := len(f.s.tasks); got != 1 {
+	if got := f.taskCount(); got != 1 {
 		t.Fatalf("len(s.tasks) = %d after a schedule change; want 1", got)
 	}
 	second := f.task(1)
@@ -911,193 +1517,50 @@ func TestRefreshJobsRestartsTaskWhenScheduleChanges(t *testing.T) {
 		t.Fatal("job 1 is missing after the schedule change")
 	}
 	if second == first {
-		t.Error("the schedule change did not restart the task; scheduler.go:95-98 should have replaced it")
+		t.Error("the schedule change did not restart the task")
 	}
-	if second.Schedule != "2h" {
-		t.Errorf("task 1 Schedule = %q; want %q", second.Schedule, "2h")
+	if second.Schedule != "*/30 * * * *" {
+		t.Errorf("task 1 Schedule = %q; want %q", second.Schedule, "*/30 * * * *")
 	}
 	if first.Schedule != "1h" {
 		t.Errorf("the retired task's Schedule = %q; want %q", first.Schedule, "1h")
 	}
+	if !first.stopped() {
+		t.Error("the retired task was not signalled to stop; its run loop would keep ticking")
+	}
 }
 
-// TestRefreshJobsRemovesTasksNoLongerEnabled covers scheduler.go:129-136: a job
-// that disappears from the enabled job set is dropped from the scheduler map.
+// TestRefreshJobsRemovesTasksNoLongerEnabled covers the removal branch: a job
+// that disappears from the enabled job set is dropped from the scheduler map and
+// signalled to stop.
 func TestRefreshJobsRemovesTasksNoLongerEnabled(t *testing.T) {
 	f := newSchedulerFixture(t)
 	f.src.setJobs(jobRow(1, "1h", ScooperJobClass, true))
 
-	f.s.refreshJobs()
-	if f.task(1) == nil {
+	if err := f.s.refreshJobs(); err != nil {
+		t.Fatalf("refreshJobs() = %v; want nil", err)
+	}
+	first := f.task(1)
+	if first == nil {
 		t.Fatal("job 1 was not started")
 	}
 
 	f.src.setJobs() // job disabled or deleted
-	f.s.refreshJobs()
+	if err := f.s.refreshJobs(); err != nil {
+		t.Fatalf("refreshJobs() after the job was removed = %v; want nil", err)
+	}
 
-	if got := len(f.s.tasks); got != 0 {
+	if got := f.taskCount(); got != 0 {
 		t.Errorf("len(s.tasks) = %d after the job was removed from tJobs; want 0", got)
 	}
-}
-
-// ---------------------------------------------------------------------------
-// the package's own runners
-// ---------------------------------------------------------------------------
-
-// TestRunScooperTaskIsANoOp is the only runner that completes without a
-// database, and it documents what it actually does.
-//
-// FINDING (task/eligibility.go:97-101): the scheduled ScooperTask logs "scooper
-// run complete (no plugins configured)" and returns nil, while the scooper
-// package (scooper/map.go, scooper/sftp.go, scooper/gatewayedi.go) does have
-// pluggable implementations. Scheduled scoops therefore never run, and the task
-// reports success.
-func TestRunScooperTaskIsANoOp(t *testing.T) {
-	if err := RunScooperTask(); err != nil {
-		t.Errorf("RunScooperTask() error = %v; want nil (the stub logs and returns nil)", err)
+	if !first.stopped() {
+		t.Error("the removed task was not signalled to stop")
 	}
 }
 
-// TestRefreshJobsWithoutDatabaseSkips follows the package convention
-// (recover-and-skip, see eligibility/gatewayedi_test.go:192-196): refreshJobs
-// reads tJobs through the package-level model.Queries handle, and with no
-// database that handle is nil.
-func TestRefreshJobsWithoutDatabaseSkips(t *testing.T) {
-	if model.Queries != nil {
-		t.Skipf("a live database is configured (model.Queries is non-nil); this test covers the no-database case")
-	}
-
-	defer func() {
-		if r := recover(); r != nil {
-			t.Skipf("skipping: no MySQL database is available for tJobs (model.Queries is nil); refreshJobs "+
-				"dereferences it at task/scheduler.go:69 and panics with %v instead of returning an error", r)
-		}
-	}()
-
-	s := NewScheduler()
-	s.refreshJobs()
-	t.Log("refreshJobs completed without a database connection")
-}
-
-// TestSchedulerStartWithoutDatabaseSkips covers Start(), which calls refreshJobs
-// synchronously (scheduler.go:44) before launching its ticker goroutine.
-func TestSchedulerStartWithoutDatabaseSkips(t *testing.T) {
-	if model.Queries != nil {
-		t.Skipf("a live database is configured (model.Queries is non-nil); this test covers the no-database case")
-	}
-
-	s := NewScheduler()
-
-	var recovered any
-	func() {
-		defer func() { recovered = recover() }()
-		s.Start()
-	}()
-
-	// Start creates the ticker before calling refreshJobs, so it must always be
-	// handed back; otherwise the runtime timer leaks into the test binary.
-	if s.ticker != nil {
-		s.ticker.Stop()
-	}
-
-	if recovered != nil {
-		t.Skipf("skipping: no MySQL database is available for tJobs (model.Queries is nil); Start() panics at "+
-			"task/scheduler.go:44 -> scheduler.go:69 with %v instead of returning an error", recovered)
-	}
-	s.Stop()
-	t.Log("Start() succeeded against a live database and the scheduler was stopped again")
-}
-
-// TestRunEligibilityTaskWithoutDatabasePanics records, rather than skips, the
-// behaviour of the DB-bound eligibility runner: it should return an error or be
-// skipped, but it panics.
-//
-// BUG (task/eligibility.go:24): RunEligibilityTask reaches model.Queries through
-// GetPendingEligibilityJobs with no nil guard, so with no database it panics on
-// the nil sqlc handle instead of returning an error. The scheduler runs it from
-// a goroutine (scheduler.go:125), where that panic is unrecoverable and takes
-// the process down.
-// This test pins the observed behaviour; it is not an endorsement of it.
-func TestRunEligibilityTaskWithoutDatabasePanics(t *testing.T) {
-	if model.Queries != nil {
-		t.Skipf("a live database is configured (model.Queries is non-nil); this test covers the no-database case")
-	}
-
-	var recovered any
-	func() {
-		defer func() { recovered = recover() }()
-		err := RunEligibilityTask()
-		if err != nil {
-			t.Logf("RunEligibilityTask() returned an error (%v) without a database; the nil-guard convention is "+
-				"satisfied for this path", err)
-		}
-	}()
-
-	if recovered == nil {
-		return // an error, or a clean no-op: nothing to report
-	}
-	if _, ok := recovered.(runtime.Error); !ok {
-		t.Errorf("RunEligibilityTask() panicked with %T (%v); want either an error return or a runtime nil-dereference", recovered, recovered)
-	}
-	t.Logf("BUG: RunEligibilityTask() panics with %v (task/eligibility.go:24, model.Queries is nil) instead of "+
-		"returning an error; called from scheduler.go:125 in a goroutine that panic cannot be recovered", recovered)
-}
-
-// ---------------------------------------------------------------------------
-// concurrency
-// ---------------------------------------------------------------------------
-
-// TestRunTaskConcurrentTicksNoRace runs two independent tick loops concurrently
-// under -race and retires both deterministically. TaskRunner takes no context
-// (scheduler.go:13) and the scheduler has no cancellation plumbing, so these
-// tests drive the package's own stop channel instead of a context.
-func TestRunTaskConcurrentTicksNoRace(t *testing.T) {
-	s := NewScheduler()
-	g := newLoopGuard()
-
-	var calls1, calls2 atomic.Int64
-	st1 := &scheduledTask{
-		ID: 11, Schedule: "1ms", Class: ScooperJobClass,
-		runner: func() error { calls1.Add(1); return nil }, stopCh: make(chan struct{}),
-	}
-	st2 := &scheduledTask{
-		ID: 12, Schedule: "1ms", Class: EligibilityJobClass,
-		runner: func() error { calls2.Add(1); return nil }, stopCh: make(chan struct{}),
-	}
-
-	done1 := startRunTask(s, st1, time.Millisecond)
-	done2 := startRunTask(s, st2, time.Millisecond)
-
-	defer func() {
-		if !g.retire(t, s, st1, done1, 2*time.Second) {
-			t.Errorf("task 11 did not return after being stopped")
-		}
-		if !g.retire(t, s, st2, done2, 2*time.Second) {
-			t.Errorf("task 12 did not return after being stopped")
-		}
-	}()
-
-	if !waitFor(2*time.Second, func() bool { return calls1.Load() >= 3 }) {
-		t.Fatalf("task 11 ran %d time(s) in 2s at a 1ms interval; want at least 3", calls1.Load())
-	}
-	if !waitFor(2*time.Second, func() bool { return calls2.Load() >= 3 }) {
-		t.Fatalf("task 12 ran %d time(s) in 2s at a 1ms interval; want at least 3", calls2.Load())
-	}
-
-	// Stop both loops through the production stop path, bounded; the deferred
-	// guard hard-stops anything the best-effort send misses.
-	if !g.retire(t, s, st1, done1, 2*time.Second) {
-		t.Errorf("task 11 did not stop through the production stop path (scheduler.go:163)")
-	}
-	if !g.retire(t, s, st2, done2, 2*time.Second) {
-		t.Errorf("task 12 did not stop through the production stop path (scheduler.go:163)")
-	}
-}
-
-// TestRefreshJobsConcurrentTicksNoRace runs the scheduler's tick path
-// (refreshJobs) from several goroutines while the tasks it started are ticking:
-// the state it touches (s.tasks, s.mu) must stay race free and a job must not be
-// started twice.
+// TestRefreshJobsConcurrentTicksNoRace runs refreshJobs from several goroutines
+// while the tasks it starts are running: the state it touches (s.tasks, s.mu)
+// must stay race free and a job must not be started twice.
 func TestRefreshJobsConcurrentTicksNoRace(t *testing.T) {
 	f := newSchedulerFixture(t)
 	f.src.setJobs(
@@ -1111,7 +1574,9 @@ func TestRefreshJobsConcurrentTicksNoRace(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			f.s.refreshJobs()
+			if err := f.s.refreshJobs(); err != nil {
+				t.Errorf("concurrent refreshJobs() = %v; want nil", err)
+			}
 		}()
 	}
 
@@ -1123,42 +1588,122 @@ func TestRefreshJobsConcurrentTicksNoRace(t *testing.T) {
 		t.Fatal("concurrent refreshJobs calls did not finish within 5s")
 	}
 
-	// All writers have finished, so reading the map here is race free.
-	if got := len(f.s.tasks); got != 2 {
-		t.Errorf("len(s.tasks) = %d after three concurrent refreshes; want 2 (one task per startable job; no "+
-			"duplicates from the concurrent refresh)", got)
+	if got := f.taskCount(); got != 3 {
+		t.Errorf("len(s.tasks) = %d after three concurrent refreshes; want 3 (one task per job, no duplicates)", got)
 	}
 	f.task(1)
 	f.task(2)
+	f.task(3)
 }
 
-// TestSchedulerDoubleStartRaceRepro is the minimal reproduction for a data race
-// in the scheduler lifecycle. It is opt-in because a `go test -race` run that
-// trips the race detector aborts the whole test binary.
+// ---------------------------------------------------------------------------
+// the package's own runners
+// ---------------------------------------------------------------------------
+
+// TestRunScooperTaskIsANoOp documents what the scheduled ScooperTask actually
+// does.
 //
-// BUG (task/scheduler.go:43 vs scheduler.go:49): Start writes s.ticker without
-// synchronisation while a previously started ticker goroutine re-reads s.ticker
-// in its select on every iteration, and the lifecycle is unguarded. Calling
-// Start twice (double initialisation, or a restart after Stop) is therefore a
-// data race on the ticker field.
-//
-// Reproduce with:
-//
-//	REMITT_TASK_RACE_REPRO=1 go test -race -count=1 -run TestSchedulerDoubleStartRaceRepro -v ./task/
-func TestSchedulerDoubleStartRaceRepro(t *testing.T) {
-	if os.Getenv("REMITT_TASK_RACE_REPRO") == "" {
-		t.Skip("opt-in reproduction: set REMITT_TASK_RACE_REPRO=1 and run with -race to observe the " +
-			"unsynchronised write/read of s.ticker (scheduler.go:43 vs scheduler.go:49)")
+// FINDING (task/eligibility.go): the scheduled ScooperTask logs "scooper run
+// complete (no plugins configured)" and returns nil, while the scooper package
+// (scooper/map.go, scooper/sftp.go, scooper/gatewayedi.go) does have pluggable
+// implementations. Scheduled scoops therefore never run, and the task reports
+// success. This is outside the scope of the scheduler fixes and is pinned here
+// so a change in behaviour is noticed.
+func TestRunScooperTaskIsANoOp(t *testing.T) {
+	if err := RunScooperTask(); err != nil {
+		t.Errorf("RunScooperTask() error = %v; want nil (the stub logs and returns nil)", err)
+	}
+}
+
+// TestRefreshJobsWithoutDatabaseReportsError pins the nil-guard convention this
+// repo uses (see eligibility/gatewayedi.go): with no database, refreshJobs
+// returns an error naming the missing dependency instead of dereferencing the
+// nil sqlc handle and panicking.
+func TestRefreshJobsWithoutDatabaseReportsError(t *testing.T) {
+	if model.Queries != nil {
+		t.Skip("a live database is configured (model.Queries is non-nil); this test covers the no-database case")
 	}
 
-	f := newSchedulerFixture(t)
-	f.src.setJobs(jobRow(1, "1h", ScooperJobClass, true))
+	s := NewScheduler()
+	err := s.refreshJobs()
+	if err == nil {
+		t.Fatal("refreshJobs() = nil with model.Queries nil; want an error, not a nil dereference")
+	}
+	if !strings.Contains(err.Error(), "database not initialized") {
+		t.Errorf("refreshJobs() error = %q; want it to report the uninitialized database", err.Error())
+	}
+}
 
-	f.s.Start() // starts a ticker goroutine that reads s.ticker every iteration
-	time.Sleep(20 * time.Millisecond)
-	f.s.Start() // rewrites s.ticker while that goroutine is reading it
-	time.Sleep(20 * time.Millisecond)
+// TestSchedulerStartStopWithoutDatabase covers the lifecycle with no database:
+// Start's refreshJobs fails with a logged error, and the scheduler must still
+// start, stop cleanly and be safe to stop twice.
+func TestSchedulerStartStopWithoutDatabase(t *testing.T) {
+	if model.Queries != nil {
+		t.Skip("a live database is configured (model.Queries is non-nil); this test covers the no-database case")
+	}
 
-	f.s.Stop()
-	time.Sleep(50 * time.Millisecond)
+	s := NewScheduler()
+	s.Start()
+	if !s.running {
+		t.Error("Start() did not mark the scheduler running")
+	}
+	if s.ticker == nil {
+		t.Error("Start() did not install a refresh ticker; the runtime timer would leak")
+	}
+	s.Stop()
+	s.Stop()
+	if s.running {
+		t.Error("Stop() left the scheduler marked running")
+	}
+}
+
+// TestRunEligibilityTaskWithoutDatabaseReportsError pins the other DB-bound
+// runner: it must return the error rather than panicking on the nil handle. The
+// scheduler runs it from a goroutine, where that panic was unrecoverable and took
+// the whole process down.
+func TestRunEligibilityTaskWithoutDatabaseReportsError(t *testing.T) {
+	if model.Queries != nil {
+		t.Skip("a live database is configured (model.Queries is non-nil); this test covers the no-database case")
+	}
+
+	err := RunEligibilityTask()
+	if err == nil {
+		t.Fatal("RunEligibilityTask() = nil with model.Queries nil; want an error, not a nil dereference")
+	}
+	if !strings.Contains(err.Error(), "database not initialized") {
+		t.Errorf("RunEligibilityTask() error = %q; want it to report the uninitialized database", err.Error())
+	}
+}
+
+// TestRunTaskWithoutRunnerOrSchedule covers the two defensive guards in runTask:
+// neither a missing runner nor a missing parsed schedule may panic, because
+// runTask runs in a goroutine where a panic is unrecoverable.
+func TestRunTaskWithoutRunnerOrSchedule(t *testing.T) {
+	cases := []struct {
+		name string
+		task *scheduledTask
+	}{
+		{"nil_runner", &scheduledTask{
+			ID: 31, Schedule: "1h", Class: ScooperJobClass,
+			schedule: &parsedSchedule{raw: "1h", interval: time.Hour},
+			stopCh:   make(chan struct{}),
+		}},
+		{"nil_schedule", &scheduledTask{
+			ID: 32, Schedule: "1h", Class: ScooperJobClass,
+			runner: func() error { return nil },
+			stopCh: make(chan struct{}),
+		}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := NewScheduler()
+			done := startRunTask(s, tc.task)
+			select {
+			case <-done:
+			case <-time.After(2 * time.Second):
+				t.Fatal("runTask did not return for an unusable task")
+			}
+		})
+	}
 }

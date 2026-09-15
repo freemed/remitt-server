@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log"
 	"time"
 
@@ -20,6 +21,10 @@ const (
 
 // RunEligibilityTask processes pending records in tEligibilityJobs.
 func RunEligibilityTask() error {
+	if model.Queries == nil {
+		return fmt.Errorf("database not initialized")
+	}
+
 	var jobs []model.EligibilityJobsModel
 	rows, err := model.Queries.GetPendingEligibilityJobs(context.Background())
 	if err != nil {
