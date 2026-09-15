@@ -2,9 +2,11 @@ package transport
 
 // sftp_test.go pins the sftp transport contract (sftp.go): configuration is
 // read from the documented option keys (sftpUsername/sftpPassword/sftpHost/
-// sftpPort/sftpPath), the plugin refuses to run with missing configuration, an
-// option that cannot be coerced is reported by SetOptions, and the connection
-// is attempted against exactly the host and port it was configured with.
+// sftpPort/sftpPath) AND, when nothing calls SetOptions, from the caller's own
+// tUserConfig rows (selfconfig.go), the plugin refuses to run with missing
+// configuration, an option that cannot be coerced is reported by SetOptions or
+// by the stored-value conversion, and the connection is attempted against
+// exactly the host and port it was configured with.
 //
 // Host key verification is pinned here too: the transport verifies against
 // paths.known-hosts, sftp-insecure-ignore-hostkey is the only (explicit,
@@ -22,10 +24,12 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"database/sql/driver"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -642,34 +646,80 @@ func TestSftp_Transport_UnverifiableKnownHostsFileIsReported(t *testing.T) {
 	}
 }
 
-// TestSftp_Transport_IgnoresUserContext documents that sftp.Transport never
-// reads user.FromContext, unlike the other transports in this package: a
-// context with no user is still used to push files (no identity is attached to
-// the transfer). The insecure opt-in is configured only so the call gets as far
-// as the dial; that path is not what this test asserts on.
-func TestSftp_Transport_IgnoresUserContext(t *testing.T) {
-	host, port, accepted := localSSHBait(t)
-	withHostKeyPolicy(t, "", true)
+// TestSftp_Transport_ReadsTheUserFromContext pins the fix for the one thing
+// that kept this plugin from being configurable out of the database: SFTP never
+// called user.FromContext, so it had no username to look tUserConfig up with
+// (claimlogic/storefile/storefilepdf/gatewayedi all did). The plugin now reads
+// the caller from the context and loads that user's own rows for this plugin,
+// which is what lets a job deliver with nothing calling SetOptions.
+//
+// (Replaces TestSftp_Transport_IgnoresUserContext, which pinned that sftp never
+// consulted the user context.)
+func TestSftp_Transport_ReadsTheUserFromContext(t *testing.T) {
+	t.Run("the caller's stored options are looked up and used", func(t *testing.T) {
+		srv := startSftpTestServer(t)
+		withHostKeyPolicy(t, "", true)
+		db := withStubQueries(t, nil, configRowColumns, [][]driver.Value{
+			configRow("alice", JavaPluginPrefix+"SftpTransport", "sftpHost", srv.host),
+			configRow("alice", JavaPluginPrefix+"SftpTransport", "sftpPort", strconv.Itoa(srv.port)),
+			configRow("alice", JavaPluginPrefix+"SftpTransport", "sftpUsername", testSftpUser),
+			configRow("alice", JavaPluginPrefix+"SftpTransport", "sftpPassword", testSftpPass),
+			configRow("alice", JavaPluginPrefix+"SftpTransport", "sftpPath", srv.dir),
+		})
 
-	s := &Sftp{}
-	if err := s.SetContext(context.Background()); err != nil { // deliberately no user
-		t.Fatal(err)
-	}
-	if err := s.SetOptions(map[string]any{
-		"sftpHost": host, "sftpPort": port,
-		"sftpUsername": "bob", "sftpPassword": "secret",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	err := s.Transport("payload.x12", []byte("ISA*00*"))
-	if err == nil {
-		t.Fatal("Transport() against a non-SSH listener returned a nil error; want the handshake failure")
-	}
-	if strings.Contains(err.Error(), "unable to retrieve user") {
-		t.Fatalf("Transport() = %q; sftp now consults the user context - update this test", err.Error())
-	}
-	_ = awaitConnection(t, accepted)
-	t.Log("pinned behaviour: sftp.Transport proceeds without a user in the context (sftp.go never calls user.FromContext)")
+		s := &Sftp{}
+		if err := s.SetContext(ctxWithUser("alice")); err != nil { // SetContext alone, as jobqueue calls it
+			t.Fatal(err)
+		}
+		if err := s.Transport("payload.x12", []byte("ISA*00*")); err != nil {
+			t.Fatalf("Transport() with a user in the context and no SetOptions = %v; want the database-configured upload", err)
+		}
+		if _, err := os.Stat(filepath.Join(srv.dir, "payload.x12")); err != nil {
+			t.Errorf("the server did not receive the payload: %v", err)
+		}
+
+		calls := db.queryCalls()
+		if len(calls) != 1 {
+			t.Fatalf("recorded %d configuration lookups; want exactly 1 (the caller's tUserConfig rows)", len(calls))
+		}
+		if len(calls[0].Args) != 1 || calls[0].Args[0] != driver.Value("alice") {
+			t.Errorf("the configuration lookup was issued with args %#v; want the context user %q", calls[0].Args, "alice")
+		}
+	})
+
+	t.Run("no user in the context means no lookup, and the plugin still dials what it was given", func(t *testing.T) {
+		host, port, accepted := localSSHBait(t)
+		withHostKeyPolicy(t, "", true)
+
+		// Nobody's rows can be reached: there is no username to look up.
+		db := withStubQueries(t, nil, configRowColumns, [][]driver.Value{
+			configRow("alice", JavaPluginPrefix+"SftpTransport", "sftpHost", "203.0.113.7"),
+		})
+
+		s := &Sftp{}
+		if err := s.SetContext(context.Background()); err != nil { // deliberately no user
+			t.Fatal(err)
+		}
+		if err := s.SetOptions(map[string]any{
+			"sftpHost": host, "sftpPort": port,
+			"sftpUsername": "bob", "sftpPassword": "secret",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		err := s.Transport("payload.x12", []byte("ISA*00*"))
+		if err == nil {
+			t.Fatal("Transport() against a non-SSH listener returned a nil error; want the handshake failure")
+		}
+		if strings.Contains(err.Error(), "unable to retrieve user") {
+			t.Fatalf("Transport() = %q; a user-less context must leave the explicitly set options in place, not fail the transfer", err.Error())
+		}
+		if got := db.queryCalls(); len(got) != 0 {
+			t.Errorf("recorded %d configuration lookups without a user in the context; want 0", len(got))
+		}
+		// The transfer is a gift to nobody: the explicitly configured endpoint
+		// is the one dialled.
+		_ = awaitConnection(t, accepted)
+	})
 }
 
 // TestSftp_Options_KeydataIsNotSettable documents CURRENT behaviour: Sftp has a

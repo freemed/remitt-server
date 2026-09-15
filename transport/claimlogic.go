@@ -26,12 +26,26 @@ type ClaimLogic struct {
 	password string
 	path     string
 	ctx      context.Context
+
+	// explicit holds the options a direct caller handed to SetOptions. They
+	// take precedence over the values stored for the user in tUserConfig (see
+	// configureFromUser and selfconfig.go).
+	explicit map[string]any
 }
 
 func (c *ClaimLogic) Transport(filename string, data any) error {
 	um, ok := user.FromContext(c.ctx)
 	if !ok {
 		return fmt.Errorf("claimlogic: unable to retrieve user from context")
+	}
+
+	// Resolve the configuration before it is used: the caller's own
+	// tUserConfig rows are applied through SetOptions' coercion path, and
+	// anything a direct caller set explicitly beats them. ClaimLogic still
+	// performs no up-front validation of its own - an endpoint that is still
+	// empty is reported by the dial, exactly as before.
+	if err := c.configureFromUser(); err != nil {
+		return err
 	}
 
 	// Convert data to bytes
@@ -108,6 +122,39 @@ func (c *ClaimLogic) Options() []string {
 	return []string{"claimlogicHost", "claimlogicPort", "claimlogicUsername", "claimlogicPassword", "claimlogicPath"}
 }
 
+// userConfigNamespaces returns the tUserConfig namespaces this plugin's own
+// rows live under, the Java FQCN the legacy database stores first and the
+// registered short name second.
+func (c *ClaimLogic) userConfigNamespaces() []string {
+	return transportNamespaces("claimlogic", "ClaimLogicTransport")
+}
+
+// storedOptionValue converts one stored tUserConfig value into the Go value
+// SetOptions expects. claimlogicPort is the plugin's only int option; every
+// other option is text.
+func (c *ClaimLogic) storedOptionValue(option, stored string) (any, error) {
+	if option == "claimlogicPort" {
+		return storedIntOption(option, stored)
+	}
+	return storedStringOption(option, stored)
+}
+
+// configureFromUser reads the caller's own configuration out of tUserConfig and
+// applies it, so the plugin delivers to the endpoint the user actually
+// configured without anything having to call SetOptions.
+//
+// Explicitly-set options always win over database-derived ones; the database
+// only fills in what SetOptions did not supply. With no user in the context, or
+// no database, there is no database-derived configuration and the plugin keeps
+// exactly what SetOptions gave it (see selfconfig.go).
+func (c *ClaimLogic) configureFromUser() error {
+	stored, err := loadUserConfigOptions(c.ctx, "claimlogic", c.userConfigNamespaces(), c.Options(), c.storedOptionValue)
+	if err != nil {
+		return fmt.Errorf("claimlogic: %w", err)
+	}
+	return c.applyOptions(mergeOptions(stored, c.explicit))
+}
+
 // SetOptions sets the current options for this plugin.
 //
 // An option that is present but carries the wrong type is reported: the
@@ -118,7 +165,19 @@ func (c *ClaimLogic) Options() []string {
 // An option that is simply absent is not an error - the field keeps its zero
 // value (ClaimLogic still performs no up-front configuration validation, so an
 // empty endpoint is reported by the dial).
+//
+// The options handed in here are remembered as the explicitly-set ones: they
+// take precedence, option by option, over the values the caller has stored for
+// this plugin in tUserConfig, which Transport applies on top of what is missing
+// (see configureFromUser).
 func (c *ClaimLogic) SetOptions(o map[string]any) error {
+	c.explicit = copyOptions(o)
+	return c.applyOptions(o)
+}
+
+// applyOptions is the option-coercion path: it maps an option map onto the
+// plugin's own fields, reporting any value it cannot coerce.
+func (c *ClaimLogic) applyOptions(o map[string]any) error {
 	var err error
 	if c.host, err = c.stringOption(o, "claimlogicHost"); err != nil {
 		return err

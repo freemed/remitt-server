@@ -28,10 +28,22 @@ type GatewayEdi struct {
 	password string
 	path     string
 	ctx      context.Context
+
+	// explicit holds the options a direct caller handed to SetOptions. They
+	// take precedence over the values stored for the user in tUserConfig (see
+	// configureFromUser and selfconfig.go).
+	explicit map[string]any
 }
 
 // Transport performs the actual work of transport, given the input.
 func (g *GatewayEdi) Transport(filename string, data any) error {
+	// Resolve the configuration before it is validated or used: the caller's
+	// own tUserConfig rows are applied through SetOptions' coercion path, and
+	// anything a direct caller set explicitly beats them.
+	if err := g.configureFromUser(); err != nil {
+		return err
+	}
+
 	if g.host == "" || g.port == 0 || g.username == "" {
 		return fmt.Errorf("gatewayedi: missing host, port, or username")
 	}
@@ -119,6 +131,39 @@ func (g *GatewayEdi) Options() []string {
 	return []string{"gatewayEdiHost", "gatewayEdiPort", "gatewayEdiUsername", "gatewayEdiPassword", "gatewayEdiPath"}
 }
 
+// userConfigNamespaces returns the tUserConfig namespaces this plugin's own
+// rows live under, the Java FQCN the legacy database stores first and the
+// registered short name second.
+func (g *GatewayEdi) userConfigNamespaces() []string {
+	return transportNamespaces("gatewayedi", "GatewayEdiTransport")
+}
+
+// storedOptionValue converts one stored tUserConfig value into the Go value
+// SetOptions expects. gatewayEdiPort is the plugin's only int option; every
+// other option is text.
+func (g *GatewayEdi) storedOptionValue(option, stored string) (any, error) {
+	if option == "gatewayEdiPort" {
+		return storedIntOption(option, stored)
+	}
+	return storedStringOption(option, stored)
+}
+
+// configureFromUser reads the caller's own configuration out of tUserConfig and
+// applies it, so the plugin delivers to the endpoint the user actually
+// configured without anything having to call SetOptions.
+//
+// Explicitly-set options always win over database-derived ones; the database
+// only fills in what SetOptions did not supply. With no user in the context, or
+// no database, there is no database-derived configuration and the plugin keeps
+// exactly what SetOptions gave it (see selfconfig.go).
+func (g *GatewayEdi) configureFromUser() error {
+	stored, err := loadUserConfigOptions(g.ctx, "gatewayedi", g.userConfigNamespaces(), g.Options(), g.storedOptionValue)
+	if err != nil {
+		return fmt.Errorf("gatewayedi: %w", err)
+	}
+	return g.applyOptions(mergeOptions(stored, g.explicit))
+}
+
 // SetOptions sets the current options for this plugin.
 //
 // An option that is present but carries the wrong type is reported: the
@@ -128,7 +173,19 @@ func (g *GatewayEdi) Options() []string {
 //
 // An option that is simply absent is not an error - the field keeps its zero
 // value and Transport reports it as missing configuration.
+//
+// The options handed in here are remembered as the explicitly-set ones: they
+// take precedence, option by option, over the values the caller has stored for
+// this plugin in tUserConfig, which Transport applies on top of what is missing
+// (see configureFromUser).
 func (g *GatewayEdi) SetOptions(o map[string]any) error {
+	g.explicit = copyOptions(o)
+	return g.applyOptions(o)
+}
+
+// applyOptions is the option-coercion path: it maps an option map onto the
+// plugin's own fields, reporting any value it cannot coerce.
+func (g *GatewayEdi) applyOptions(o map[string]any) error {
 	var err error
 	if g.host, err = g.stringOption(o, "gatewayEdiHost"); err != nil {
 		return err
