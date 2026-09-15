@@ -85,9 +85,22 @@ func (o *JobQueueItem) Unlock() {
 	o.lock.Unlock()
 }
 
+// AppendLog records a log line and updates the message. It takes the job's lock.
 func (o *JobQueueItem) AppendLog(item string) {
-	log.Printf("JobQueue status %d | %s", o.ID, item)
 	o.lock.Lock()
+	defer o.lock.Unlock()
+	o.appendLogLocked(item)
+}
+
+// appendLogLocked does AppendLog's work for callers that ALREADY hold the lock.
+// It exists because Fail holds the write lock and used to call the exported
+// AppendLog, which takes the same non-reentrant sync.RWMutex: marking a job
+// FAILED deadlocked the caller while holding the job's own lock. Every failure
+// path in executeJob returns through Fail (including the worker's own i.Fail),
+// so a failing job HUNG instead of failing - which is precisely the behaviour a
+// fix that must "fail the job and name the option" depends on.
+func (o *JobQueueItem) appendLogLocked(item string) {
+	log.Printf("JobQueue status %d | %s", o.ID, item)
 	if o.Log == nil {
 		o.Log = make([]string, 0)
 	}
@@ -97,8 +110,6 @@ func (o *JobQueueItem) AppendLog(item string) {
 	o.Message = item
 
 	// Journal updates to database (sqlc migration pending)
-
-	o.lock.Unlock()
 }
 
 func (o *JobQueueItem) IsCancelled() bool {
@@ -121,11 +132,11 @@ func (o *JobQueueItem) Finish() {
 
 func (o *JobQueueItem) Fail(err error) {
 	o.lock.Lock()
+	defer o.lock.Unlock()
 	o.Status = jobStatusMap[JobStatusFailed]
 	o.Completed = model.NullTimeNow()
-	o.AppendLog(err.Error())
+	o.appendLogLocked(err.Error())
 	o.Message = err.Error()
-	o.lock.Unlock()
 }
 
 func (o *JobQueueItem) Render() (out []byte, err error) {
