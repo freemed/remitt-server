@@ -4,9 +4,69 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
+
+// xslCompareWhitespaceRe collapses inter-tag whitespace so that two
+// serializations of the same result can be compared structurally.
+var xslCompareWhitespaceRe = regexp.MustCompile(`>\s+<`)
+
+// xslCompareXMLDeclRe matches a leading XML declaration.
+var xslCompareXMLDeclRe = regexp.MustCompile(`(?s)^\s*<\?xml.*?\?>`)
+
+// normalizeForCompare drops the XML declaration and collapses inter-tag
+// whitespace. It exists ONLY to report a second, whitespace-insensitive size
+// in failure messages: ratago runs with StylesheetOptions{IndentOutput: true}
+// while xsltproc does not indent, and ratago additionally pads whitespace
+// inside text nodes (<pagelength> 66 </pagelength> vs <pagelength>66</...>),
+// so raw byte counts understate parity badly — statement.xsl reports 2818 vs
+// 2048 raw but 1534 vs 1439 normalized. The assertion below deliberately still
+// compares RAW bytes (tested consumers parse this XML, and the fixed-form path
+// can care about text padding), but a reader must not be misled by the raw
+// number alone: both sizes are reported.
+func normalizeForCompare(s string) string {
+	s = xslCompareXMLDeclRe.ReplaceAllString(s, "")
+	for prev := ""; prev != s; {
+		prev = s
+		s = xslCompareWhitespaceRe.ReplaceAllString(s, "><")
+	}
+	return strings.TrimSpace(s)
+}
+
+// firstDivergence returns a short "first difference at N: ..." description of
+// where two normalized outputs start to differ, so a DIFFER failure points at
+// the actual divergence instead of only at two total sizes. It returns "" when
+// the inputs are equal.
+func firstDivergence(a, b string) string {
+	i := 0
+	for i < len(a) && i < len(b) && a[i] == b[i] {
+		i++
+	}
+	if i == len(a) && i == len(b) {
+		return ""
+	}
+	lo := i - 80
+	if lo < 0 {
+		lo = 0
+	}
+	hi := i + 160
+	window := func(s string) string {
+		end := hi
+		if end > len(s) {
+			end = len(s)
+		}
+		if lo >= end {
+			return ""
+		}
+		return s[lo:end]
+	}
+	return "\n  first difference at offset " + strconv.Itoa(i) +
+		"\n    ratago:   ..." + window(a) +
+		"\n    xsltproc: ..." + window(b)
+}
 
 // TestXslTransform_Compare runs each XSL transform through both ratago
 // (internal) and xsltproc (external), then diffs the output.
@@ -127,7 +187,11 @@ func TestXslTransform_Compare(t *testing.T) {
 				t.Logf("MATCH — identical output (%d bytes)", len(rStr))
 				results[name] = "MATCH"
 			default:
-				t.Errorf("DIFFER — ratago: %d bytes, xsltproc: %d bytes", len(rStr), len(xStr))
+				rNorm, xNorm := normalizeForCompare(rStr), normalizeForCompare(xStr)
+				t.Errorf("DIFFER — raw ratago: %d bytes, xsltproc: %d bytes | normalized "+
+					"(inter-tag whitespace collapsed) ratago: %d, xsltproc: %d%s",
+					len(rStr), len(xStr), len(rNorm), len(xNorm),
+					firstDivergence(rNorm, xNorm))
 				results[name] = "DIFFER"
 			}
 		})
