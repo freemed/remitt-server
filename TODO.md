@@ -118,9 +118,71 @@ All 20 endpoints are also reachable through the SOAP 1.1 compatibility layer
       `.github/workflows/go.yml` now runs each of the ten sub-modules explicitly
       after the root-module tests. It was only safe to do once `common` went
       green; the run on `8b4558b` passed (actions/runs/35001572893).
-- [ ] **Test coverage still missing** for `client`, `model`, `model/user`,
-      `scooper`, and 6 of the 7 transport plugins. (`validation`, `middleware`,
-      `task` and `crypto` gained suites on 2026-09-15.)
+- [X] **Test coverage for `client`, `model`, `model/user`, `scooper` and `transport`** —
+      added 2026-09-15 (30 tests in scooper, 62 in transport, 19 in client, 60 in
+      `model`, 4 in `model/user`). The whole workspace is green in CI. The DB-bound
+      `model` functions remain untested by design (`model.InitDb` and everything it
+      guards needs a live MySQL server); they are listed in
+      `model/models_test.go` under `TestDatabaseBoundAPIRequiresDatabase`.
+
+## FOUND BY THAT COVERAGE (tests pin these; production code NOT yet changed)
+
+Ordered by how much damage each does in production. Every one is a real code
+path, not a style preference — the tests exercise it and assert current behaviour.
+
+1. **No SFTP transport can ever deliver a file.** `transport/sftp.go:37-41`,
+   `transport/gatewayedi.go:66-70`, `transport/claimlogic.go:56-60` build an
+   `ssh.ClientConfig` with User/Auth/Timeout but **no `HostKeyCallback`**, so
+   `ssh.Dial` always returns `ssh: must specify HostKeyCallback`. Three of the
+   seven transports are therefore dead on arrival, and the ZIP container built by
+   gatewayedi/claimlogic is never uploaded.
+2. **Every job seeded from the legacy DB fails to resolve its transport.**
+   `transport/map.go` keys the registry by short names (`sftp`, `claimlogic`, …)
+   but `migrations/001_legacy.up.sql` and the UI store Java FQCNs
+   (`org.remitt.plugin.transport.SftpTransport`), and `jobqueue.go:307` passes the
+   DB value straight into `InstantiateTransporter`. `ScriptedHttpTransport` is
+   advertised by the seed with no such plugin registered.
+3. **GatewayEDI scooper stores remittances UNDECRYPTED.** `scooper/gatewayedi.go`
+   embeds `SftpScooper` by value, so `SftpScooper.Scoop` calls its own
+   `PostProcess` (Go has no virtual dispatch for embedded structs) and the
+   decrypting override is never reached — Java relies on exactly that override.
+   Separately its decryption is gated on `crypto.IsPGPEncrypted`, which matches
+   only ASCII armor while this codebase's own `EncryptPGP` emits binary.
+4. **`model.NullString` silently voids non-NULL data.** `NewNullStringValue`
+   never sets `Valid`, so `nullStringFromSQL` reports every non-NULL column as
+   unset: plugin `inputformat`/`outputformat` and a user's `contactEmail`,
+   callback username and password all marshal as `null`. `UnmarshalJSON` is also
+   on a VALUE receiver (a silent no-op), and `MarshalJSON` uses `QuoteToASCII`,
+   which emits invalid JSON for control characters and makes `json.Marshal` fail
+   outright for strings MySQL stores happily.
+5. **Registry data races (fatal, not recoverable).** `transport/map.go:21-27` and
+   `scooper/map.go:22` read the registry map without the lock that `Register*`
+   takes; a concurrent run aborts the process with "concurrent map read and map
+   write". `transport/registry_race_probe_test.go` is build-tag gated because the
+   runtime fatal error cannot be caught by a test.
+6. **`client.PayloadInsert` is rejected by this server.** It sends no
+   `Content-Type`, and echo's binder answers 415 — the api tests never caught it
+   because they set the header themselves. `client.Ping` also passes the base URL
+   as a printf FORMAT string (any `%` in the URL breaks it), no method checks
+   `resp.StatusCode` (a 500 body is decoded as a success) and none closes
+   `resp.Body`.
+7. **`script_http.go` can hang or crash a job.** No client timeout (a hung payer
+   blocks the worker forever), the HTTP status is never inspected (a 404 body is
+   returned as a success), a connection failure is indistinguishable from an empty
+   body, and a malformed URL panics through `Script.RunUnsafe` into the job worker.
+8. **`model.NullInt.UnmarshalJSON` ignores the document's own `Valid` field**
+   (`Valid = err == nil`), so `{"Int64":0,"Valid":false}` decodes as a valid zero;
+   `model.NullTime.Scan` never fails (a string date silently clears the field) and
+   `UnmarshalJSON` errors on `null` while accepting short junk; `model/user/user.go`
+   reports a typed-nil user as found.
+9. **`scooper` port parsing is lossy and unvalidated** (`fmt.Sscanf` error
+   discarded: `22xyz`→22, `abc`→0, `-1` passes the guard), and `model.SqlDb` is
+   dereferenced with no nil guard in `scooper/sftp.go:42`,
+   `scooper/gatewayedi.go:33`, `transport/storefile.go:48` and
+   `transport/storefilepdf.go:48` — an uninitialised database panics the worker
+   instead of returning an error. The Java `GatewayEdiSftpScooper` also hardcoded
+   its vendor endpoint; the Go port has no defaults, so a registry-built
+   GatewayEDI scooper is always unconfigured.
 
 ## FIXED on 2026-09-15 (this file previously claimed these worked)
 
