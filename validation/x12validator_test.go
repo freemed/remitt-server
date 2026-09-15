@@ -59,13 +59,26 @@ BPR*I*1250.00*C*CHK**01*123456789*DA*987654321*1234567890*01*20240810~
 `
 
 // wrongSeparatorPayload is a malformed envelope whose ISA element separator is
-// "|" instead of "*". The trailing segments are still valid X12 and are
-// separated by real newlines (the script trims each segment,
-// 004010X098A1.js:14): with the ISA separator wrong, the separator-aware
-// structure is broken, but the segment-tag-prefix checks still pass, so the
-// script reports the payload as valid.
+// "|" instead of "*": the header declares "|" and the segments that follow use
+// "*". The trailing segments are still valid X12 and are separated by real
+// newlines, and their tags still start their segments, so the tag-prefix
+// presence checks in the specification script (004010X098A1.js:13-21) pass and
+// used to report the payload as valid. The interchange header's own declarations
+// are now enforced before the script runs (x12validator.go,
+// x12StructuralFindings), so this payload is rejected.
 const wrongSeparatorPayload = "ISA|00|x|00|y|ZZ|REMITT|ZZ|RECEIVER|240810|1200|U|00401|000000001|0|P|:~\n" +
 	"GS*HC*A*B*20240810*1200*1*X*004010X098A1~\nST*835*0001~\nSE*1*0001~\nGE*1*1~\nIEA*1*000000001~\n"
+
+// isaHeader108 is the well-formed interchange header the delimiter cases share:
+// 16 elements, ISA16 ":" at index 106 and the declared segment terminator "~" at
+// index 107. x12StructuralFindings derives both from the payload rather than
+// assuming an offset, because the repo's fixtures use this 108-byte header and
+// not the 106-byte header of the standard.
+const isaHeader108 = "ISA*00*          *00*          *ZZ*REMITT          *ZZ*RECEIVER        *240810*1200*U*00401*000000001*0*P*:~"
+
+// bodyHonoursHeader is an envelope body that uses the "*" element separator and
+// the "~" segment terminator that isaHeader108 declares.
+const bodyHonoursHeader = "GS*HC*A*B*20240810*1200*1*X*004010X098A1~\nST*835*0001~\nSE*1*0001~\nGE*1*1~\nIEA*1*000000001~\n"
 
 // newlineOnlyEnvelope has one segment per line and no "~" separators at all.
 const newlineOnlyEnvelope = "ISA*00*          *00*          *ZZ*REMITT          *ZZ*RECEIVER        *240810*1200*U*00401*000000001*0*P*:\n" +
@@ -594,45 +607,209 @@ func TestX12Validator_InvalidPayloadsAreNeverReportedValid(t *testing.T) {
 	})
 }
 
-// Retargeted (was TestX12Validator_KnownBug_WrongElementSeparatorAccepted).
+// Retargeted (was TestX12Validator_WrongElementSeparator_ScriptCoverageGap,
+// which pinned the old behaviour: the wrong-element-separator payload came back
+// as {"status":"OK","messages":["X12 structure valid"]}).
 //
-// The outer status is no longer hard-coded, but this payload is still reported
-// as valid, because the gap is in the script's coverage rather than in the
-// status rollup: the spec script only checks segment-tag prefixes after
-// splitting on "~"/"\n" (resources/scripts/validation/004010X098A1.js:8-21), so
-// an ISA whose element separator is "|" still counts as an ISA segment. The
-// Java never reaches that point for such a payload because it derives the
-// document type through the pb.x12 Parser first (X12Validator.java:56,139-145);
-// enforcing delimiter integrity in the Go port is a separate change (see the
-// task report). This test pins the current behaviour and fails loudly - it does
-// not skip - if either the legacy "success" literal returns or the gap closes
-// without the report being updated.
-func TestX12Validator_WrongElementSeparator_ScriptCoverageGap(t *testing.T) {
-	// Fixture sanity: the ISA element separator really is "|", the remaining
-	// segments really are newline-separated, and no doubled backslash-newline
-	// has crept in (that would make the script report missing segments for a
-	// reason unrelated to delimiter integrity).
-	if !strings.HasPrefix(wrongSeparatorPayload, "ISA|") {
-		t.Fatalf("fixture must use \"|\" as the ISA element separator: %q", wrongSeparatorPayload)
-	}
-	if strings.Contains(wrongSeparatorPayload, `\n`) {
-		t.Fatalf("fixture contains a literal backslash-n instead of a newline: %q", wrongSeparatorPayload)
-	}
-	if !strings.Contains(wrongSeparatorPayload, "\nGS*HC*A*B*") {
-		t.Fatalf("fixture must newline-separate the trailing segments: %q", wrongSeparatorPayload)
+// FIXED: the interchange header's own declarations are enforced on the Go side
+// before the specification script's verdict is trusted, in the place the Java
+// 0.5.x validator does its structural work (X12Validator.java:56 parses the
+// interchange through getX12DocumentType() before it selects or runs a script).
+// The script's contract is unchanged - it splits on /[~\n]/ and tests
+// segment-tag prefixes (004010X098A1.js:8-21), so it can only see segment
+// PRESENCE; delimiter integrity is what it cannot see and what this gate adds.
+//
+// Each case states the behaviour the validator must show; the ones that are
+// still unhandled are named as such in the case comment and in the task report
+// rather than asserted as if they were caught.
+func TestX12Validator_DelimiterIntegrity(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		// wantStatus is the Java ValidationStatus the caller must see.
+		wantStatus string
+		// wantContains must appear in the joined messages for a rejection;
+		// wantMessages is the exact message list for an OK verdict.
+		wantContains string
+		wantMessages []string
+		wantWhy      string
+	}{
+		{
+			name:         "correct_delimiters",
+			in:           isaHeader108 + "\n" + bodyHonoursHeader,
+			wantStatus:   statusOK,
+			wantMessages: []string{"X12 structure valid"},
+			wantWhy:      "header declares * and ~, body uses * and ~",
+		},
+		{
+			name:         "correct_delimiters_newline_delimited_header",
+			in:           newlineOnlyEnvelope,
+			wantStatus:   statusOK,
+			wantMessages: []string{"X12 structure valid"},
+			wantWhy:      "the header itself is terminated by the line break, so line breaks are the declared terminator",
+		},
+		{
+			name: "wrong_element_separator_in_body_only",
+			in:   isaHeader108 + "\n" + strings.NewReplacer("*", "|").Replace(bodyHonoursHeader),
+			// Used to be reported OK: every tag still starts its segment, so the
+			// script's presence checks pass.
+			wantStatus:   statusError,
+			wantContains: `element separator "*"`,
+			wantWhy:      "header declares *, body uses |",
+		},
+		{
+			name: "wrong_element_separator_declared_in_isa",
+			in:   wrongSeparatorPayload, // the payload the gap test used to pin
+			// Used to be reported OK for the same reason: the body is well-formed
+			// X12 ("*"/"~") and only the header's declaration is wrong.
+			wantStatus:   statusError,
+			wantContains: `element separator "|"`,
+			wantWhy:      "header declares |, body uses *",
+		},
+		{
+			name: "wrong_terminator",
+			in:   isaHeader108 + "\n" + strings.NewReplacer("~\n", "|\n").Replace(bodyHonoursHeader),
+			// Used to be reported OK: the script terminates segments on ~ *or*
+			// newline, so a body it can still split is still "present".
+			wantStatus:   statusError,
+			wantContains: `segment terminator "~"`,
+			wantWhy:      "header declares ~, body terminates with |",
+		},
+		{
+			name: "correct_body_terminated_by_newlines_only",
+			in:   isaHeader108 + "\n" + strings.NewReplacer("~\n", "\n").Replace(bodyHonoursHeader),
+			// Tightening: the header declares ~, so a body that relies on line
+			// breaks alone is no longer accepted. The newline *dialect* is still
+			// valid when the header itself is line-terminated
+			// (correct_delimiters_newline_delimited_header above).
+			wantStatus:   statusError,
+			wantContains: `segment terminator "~"`,
+			wantWhy:      "header declares ~, body has no terminator at all",
+		},
+		{
+			name: "isa_truncated_mid_segment",
+			in: "ISA*00*          *00*          *ZZ*REMITT*ZZ*RECEI\n" +
+				bodyHonoursHeader,
+			// Used to be reported OK: the truncated header still starts with ISA
+			// and the body supplies every segment the script looks for. The
+			// header cannot be decomposed, which is what the Java's parser call
+			// fails on.
+			wantStatus:   statusError,
+			wantContains: "ISA segment is not a well-formed interchange header",
+			wantWhy:      "the ISA does not end at a segment terminator after its 16 elements",
+		},
+		{
+			name: "correct_delimiters_plus_garbage_segment",
+			in: isaHeader108 + "\n" + "GS*HC*A*B*20240810*1200*1*X*004010X098A1~\nST*835*0001~\n" +
+				"ZZZ*GARBAGE*1~\nSE*2*0001~\nGE*1*1~\nIEA*1*000000001~\n",
+			// Documented, not claimed as caught: an extra segment that honours the
+			// delimiters is invisible to both this gate and the script (the script
+			// only asks that the six envelope segments are present,
+			// 004010X098A1.js:13-21), so this is still OK. Segment-level
+			// vocabulary, SE/ST counts and SNIP validation are the specification
+			// script's business, not this gate's.
+			wantStatus:   statusOK,
+			wantMessages: []string{"X12 structure valid"},
+			wantWhy:      "extra well-formed segment: unhandled by design, still reported OK",
+		},
 	}
 
-	resp := runValidator(t, []byte(wrongSeparatorPayload))
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := runValidator(t, []byte(tc.in))
 
-	if resp.Status != statusOK {
-		t.Fatalf("behaviour changed: the wrong-element-separator payload now reports %q (%v); "+
-			"delimiter integrity appears to be enforced now - update this test and the delimiter-integrity report",
-			resp.Status, resp.Messages)
+			if resp.Status == statusOK && tc.wantStatus != statusOK {
+				t.Fatalf("payload with %s reported as %q (valid); messages: %v", tc.wantWhy, resp.Status, resp.Messages)
+			}
+			if resp.Status != tc.wantStatus {
+				t.Errorf("status: got %q want %q (%s); messages: %v", resp.Status, tc.wantStatus, tc.wantWhy, resp.Messages)
+			}
+			if len(resp.Messages) == 0 {
+				t.Fatal("expected a non-empty message list")
+			}
+			if tc.wantMessages != nil {
+				if !reflect.DeepEqual(resp.Messages, tc.wantMessages) {
+					t.Errorf("messages:\n got: %v\nwant: %v", resp.Messages, tc.wantMessages)
+				}
+				return
+			}
+			joined := strings.Join(resp.Messages, "; ")
+			if !strings.Contains(joined, tc.wantContains) {
+				t.Errorf("messages must name the problem (%q), got: %v", tc.wantContains, resp.Messages)
+			}
+			if resp.Status != statusError {
+				t.Errorf("a delimiter defect is a verdict about the document, so the status must be %q, got %q", statusError, resp.Status)
+			}
+		})
 	}
-	if want := []string{"X12 structure valid"}; !reflect.DeepEqual(resp.Messages, want) {
-		t.Errorf("unexpected messages: got %v want %v", resp.Messages, want)
+
+	// The gap fixture itself: the sanity checks the old test made still hold, so
+	// the case above is really exercising the delimiter defect and not, say, a
+	// literal backslash-n or a body without newlines.
+	t.Run("gap_fixture_is_what_it_claims", func(t *testing.T) {
+		if !strings.HasPrefix(wrongSeparatorPayload, "ISA|") {
+			t.Fatalf("fixture must use \"|\" as the ISA element separator: %q", wrongSeparatorPayload)
+		}
+		if strings.Contains(wrongSeparatorPayload, `\n`) {
+			t.Fatalf("fixture contains a literal backslash-n instead of a newline: %q", wrongSeparatorPayload)
+		}
+		if !strings.Contains(wrongSeparatorPayload, "\nGS*HC*A*B*") {
+			t.Fatalf("fixture must newline-separate the trailing segments: %q", wrongSeparatorPayload)
+		}
+		// The header declares 16 elements separated by "|" and terminated by "~".
+		header := wrongSeparatorPayload[:strings.Index(wrongSeparatorPayload, "\n")]
+		if got := strings.Count(header, "|"); got != 16 {
+			t.Errorf("fixture header must declare 16 elements, found %d separators: %q", got, header)
+		}
+		if !strings.HasSuffix(header, ":~") {
+			t.Errorf("fixture header must end with the component separator and terminator: %q", header)
+		}
+	})
+}
+
+// The structural gate must not take over from the specification script on
+// payloads the script already rejects: a payload that does not offer an
+// unambiguous interchange header is the script's business (it reports the
+// missing envelope segments), and inventing a second vocabulary for those would
+// change messages the API and SOAP callers already depend on.
+func TestX12StructuralFindings_NonInterchangePayloadsAreLeftToScript(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+	}{
+		{name: "empty", in: ""},
+		{name: "whitespace", in: "   	\n  "},
+		{name: "prose_starting_with_ISA", in: "ISA is a fine tag but this is prose, not an interchange\n"},
+		{name: "binary_garbage", in: "\x00\x01\x02not x12 at all\xff"},
+		{name: "isa_header_too_short_to_decompose", in: "ISA*00*x~\n"},
+		{name: "newline_delimited", in: newlineOnlyEnvelope},
+		{name: "well_formed_header", in: isaHeader108 + "\n" + bodyHonoursHeader},
 	}
-	t.Logf("known gap: ISA element separator \"|\" reported as valid: %v", resp.Messages)
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if findings := x12StructuralFindings([]byte(tc.in)); len(findings) != 0 {
+				t.Errorf("payload must be left to the script, got findings: %v", findings)
+			}
+		})
+	}
+}
+
+// And it must produce the defect for the payload that used to slip through.
+func TestX12StructuralFindings_ReportsDeclaredDelimiterMismatch(t *testing.T) {
+	findings := x12StructuralFindings([]byte(wrongSeparatorPayload))
+	if len(findings) == 0 {
+		t.Fatal("expected a structural finding for a header declaring \"|\" while the body uses \"*\"")
+	}
+	joined := strings.Join(findings, "; ")
+	if !strings.Contains(joined, `element separator "|"`) {
+		t.Errorf("findings must name the declared element separator, got: %v", findings)
+	}
+	// The rejection rollup puts the findings through the Java severity
+	// precedence: a document defect is ERROR, never OK and never SERVER_ERROR.
+	if got := rejectedResponse(findings).Status; got != statusError {
+		t.Errorf("rejectedResponse status = %q, want %q", got, statusError)
+	}
 }
 
 // Retargeted (was TestX12Validator_KnownBug_NilConfigPanics).
