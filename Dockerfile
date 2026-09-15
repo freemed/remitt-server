@@ -1,26 +1,28 @@
-# Multi-stage build for REMITT server
-# -----------------------------------
+# Multi-stage build for REMITT server (single-directory context)
+#   docker build -t remitt-server .        # from the remitt-server repo root
+
 # Stage 1: Build the Go binary
 FROM golang:1.25-alpine AS builder
 
 RUN apk add --no-cache git ca-certificates
 
 WORKDIR /src
-COPY go.mod go.sum ./
-RUN go mod download
 
+# Full source first: the root go.mod has local `replace => ./api` etc. directives,
+# so every workspace module must already exist before `go mod download`.
 COPY . .
+
+RUN go mod download
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo \
     -ldflags="-s -w" \
     -o /remitt-server ./cmd/remitt-server/
 
 # Stage 2: Minimal runtime
-FROM debian:stable-slim
+FROM alpine:latest
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apk add --no-cache \
     ca-certificates \
-    xsltproc \
-    && rm -rf /var/lib/apt/lists/*
+    libxslt
 
 COPY --from=builder /remitt-server /usr/local/bin/remitt-server
 

@@ -1,13 +1,7 @@
 .git/
 .hermes/
 test/
-*.md
-*.jpg
-*.png
-remitt-server
-Dockerfile
-.dockerignore
-.gitignore
-.git-crypt/
-.github/
-.travis.yml
+ui/node_modules
+vendor/
+go.work
+go.work.sum

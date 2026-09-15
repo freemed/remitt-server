@@ -7,6 +7,7 @@ use (
 	common
 	config
 	jobqueue
+	render
 	model
 	model/user
 	translation
