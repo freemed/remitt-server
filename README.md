@@ -85,6 +85,46 @@ Access control is role-based (`admin` / `user`) via BasicAuth middleware.
 - **PGP/GPG:** Native Go armoring (`crypto/pgp.go`) — encrypt, decrypt, detect
 - **Testing:** E2E pipeline test suite (`test/e2e/`) with testdata fixtures + per-plugin unit tests
 
+## Testing
+
+`test/harness/sshsftp` is an in-process SSH server with a real SFTP subsystem
+(`pkg/sftp` ships a server, not just a client) on a loopback port, with its own
+host key, its own credentials and its own temporary SFTP root. It exists so the
+SFTP paths — the `sftp` transport, `gatewayedi`, `claimlogic`, and the
+`SftpScooper` / `GatewayEdiSftpScooper` scoopers — can be tested for real
+(a handshake, host key verification, an upload, a download) without a remote
+host. Before it, those tests were skipped as "requires a live SFTP server" or
+replaced with listeners that never spoke SSH, which is how a `nil`
+`HostKeyCallback` and an undecrypted remittance both survived in the tree.
+
+```go
+srv := sshsftp.Start(t)
+knownHosts, err := srv.WriteKnownHosts(t.TempDir())
+if err != nil {
+	t.Fatal(err)
+}
+// paths.known-hosts -> knownHosts, and configure the endpoint with
+// sftpHost=srv.Host, sftpPort=srv.Port, sftpUsername=srv.User,
+// sftpPassword=srv.Password, sftpPath=srv.Dir.
+// Afterwards: srv.Uploaded("payload.x12") is what the client sent.
+```
+
+Use it only when the assertion is about the wire; configuration parsing and
+fail-closed policy checks are cheaper to pin with a listener or a fake session.
+See [test/harness/sshsftp/README.md](test/harness/sshsftp/README.md) for the
+full API.
+
+To watch a real delivery by hand, start the same server standalone — it prints
+the connection details, a ready-to-paste `known_hosts` line and the transport
+options, then reports files as they arrive:
+
+```bash
+go run ./cmd/sshsftp-harness/
+```
+
+Other suites: `test/e2e/` drives the render → translation → transport →
+callback pipeline, and `go test ./...` runs the per-plugin unit tests.
+
 ## Dependencies
 
 - [Echo v5](https://github.com/labstack/echo) — web framework
@@ -93,7 +133,7 @@ Access control is role-based (`admin` / `user`) via BasicAuth middleware.
 - [Go-MySQL-Driver](https://github.com/go-sql-driver/mysql) — MySQL driver
 - [otto](https://github.com/robertkrimen/otto) — JavaScript engine (script transports, X12 validation)
 - [goquery](https://github.com/PuerkitoBio/goquery) — HTML scraping (scripted HTTP transport)
-- [pkg/sftp](https://github.com/pkg/sftp) — SFTP client
+- [pkg/sftp](https://github.com/pkg/sftp) — SFTP client, and the server the test harness (`test/harness/sshsftp`) runs
 - [gofpdf](https://github.com/phpdave11/gofpdf) + [gofpdi](https://github.com/phpdave11/gofpdi) — PDF generation (FixedFormPdf translation)
 - [ratago](https://github.com/freemed/ratago) — native Go XSLT processor
 - [gokogiri](https://github.com/freemed/gokogiri) — native Go XML/DOM/XPath support
