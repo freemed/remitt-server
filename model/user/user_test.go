@@ -21,11 +21,13 @@
 //     numeric value cannot collide with it (the anti-collision property
 //     documented at user.go:10-17).
 //
-// # Defect documented here (pinned, not fixed)
+// # Boundary pinned here (this used to be a documented defect)
 //
 // NewContext accepts a nil *model.UserModel and FromContext reports it as a
-// FOUND value: (nil, true). A caller taking the boolean at face value will
-// dereference a nil pointer. TestFromContextReportsNilUserAsFound.
+// MISS, not a found value: the type assertion would succeed for a typed nil
+// pointer, so the boolean alone cannot be trusted and a caller that checks only
+// it would dereference nil. TestFromContextReportsNilUserAsFound (historical
+// name: the test used to pin the found=true result).
 package user
 
 import (
@@ -155,26 +157,34 @@ func TestUserKeyIsATypedKey(t *testing.T) {
 }
 
 func TestFromContextReportsNilUserAsFound(t *testing.T) {
-	// Documented defect: the value is stored and asserted as a *model.UserModel,
-	// so a typed nil pointer is indistinguishable from a real user. FromContext
-	// returns (nil, true) and a caller that checks only the boolean dereferences
-	// nil.
+	// A typed nil *model.UserModel asserts successfully, so the boolean alone
+	// cannot be trusted: FromContext reports it as a MISS and hands back the
+	// same non-nil, zero-valued model every other miss returns, so a caller that
+	// checks only the boolean no longer dereferences nil. (Historical name: this
+	// test used to pin the found=true result.)
 	var nilUser *model.UserModel
 	ctx := NewContext(context.Background(), nilUser)
 
 	got, ok := FromContext(ctx)
-	if !ok {
-		t.Fatal("expected the nil user to be reported as found; if this changed, update the test")
+	if ok {
+		t.Fatalf("a nil user was reported as found: %#v", got)
 	}
-	if got != nil {
-		t.Fatalf("value = %#v, want nil", got)
+	if got == nil {
+		t.Fatal("a miss must still return a usable (non-nil) model, not nil")
+	}
+	if *got != (model.UserModel{}) {
+		t.Errorf("value = %#v, want the zero model", got)
 	}
 
-	// NewContext(nil-context style) with a nil model behaves the same way.
+	// NewContext(ctx, nil) stores the same typed nil pointer and behaves the
+	// same way.
 	ctx2 := NewContext(context.TODO(), nil)
 	got2, ok2 := FromContext(ctx2)
-	if !ok2 || got2 != nil {
-		t.Errorf("NewContext(ctx, nil) -> %#v, %v; want a nil model reported as found", got2, ok2)
+	if ok2 {
+		t.Errorf("NewContext(ctx, nil) -> %#v, %v; want a miss", got2, ok2)
+	}
+	if got2 == nil || *got2 != (model.UserModel{}) {
+		t.Errorf("NewContext(ctx, nil) -> %#v; want a usable zero model", got2)
 	}
 }
 

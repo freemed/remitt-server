@@ -1,8 +1,8 @@
 package user
 
 import (
-        "context"
-        "log"
+	"context"
+	"log"
 
 	"github.com/freemed/remitt-server/model"
 )
@@ -18,20 +18,28 @@ var userKey key = 0
 
 // NewContext returns a new Context that carries value u.
 func NewContext(ctx context.Context, u *model.UserModel) context.Context {
-        return context.WithValue(ctx, userKey, u)
+	return context.WithValue(ctx, userKey, u)
 }
 
-// FromContext returns the UserModel value stored in ctx, if any.
+// FromContext returns the UserModel value stored in ctx, if any. A context
+// holding a typed nil *model.UserModel is a MISS, not a hit: the assertion
+// accepts a nil pointer, so a trusting caller would dereference nil. Every miss
+// returns a non-nil, zero-valued *model.UserModel, so a caller that ignores the
+// boolean still has something usable.
 func FromContext(ctx context.Context) (*model.UserModel, bool) {
-        if ctx == nil || ctx.Value(userKey) == nil {
-                log.Printf("user.FromContext(): nil context or user key: %#v", ctx)
-                return &model.UserModel{}, false
-        }
-        u, ok := ctx.Value(userKey).(*model.UserModel)
-        if !ok {
-                x, ok := ctx.Value(userKey).(model.UserModel)
-                return &x, ok
-        }
-        return u, ok
+	if ctx == nil || ctx.Value(userKey) == nil {
+		log.Printf("user.FromContext(): nil context or user key: %#v", ctx)
+		return &model.UserModel{}, false
+	}
+	if u, ok := ctx.Value(userKey).(*model.UserModel); ok {
+		if u == nil {
+			log.Printf("user.FromContext(): nil *model.UserModel in context")
+			return &model.UserModel{}, false
+		}
+		return u, true
+	}
+	if x, ok := ctx.Value(userKey).(model.UserModel); ok {
+		return &x, true
+	}
+	return &model.UserModel{}, false
 }
-

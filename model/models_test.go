@@ -9,14 +9,15 @@
 // collected in TestDatabaseBoundAPIRequiresDatabase, which skips with an
 // explicit reason rather than mocking a database.
 //
-// # Defect documented here (pinned, not fixed)
+// # Boundary pinned here (this used to be a documented defect)
 //
-// tuserToModel (user.go:31-43) funnels the four nullable user columns through
+// tuserToModel (user.go:31-43) funnels the nullable user columns through
 // NewNullStringValue via nullStringFromSQL, so a user row with a real contact
-// email or callback credential comes back with those fields marked invalid:
-// they marshal as JSON null and cannot be distinguished from a NULL column.
+// email or callback credential comes back carrying both the text and the set
+// flag: they marshal as that text, a client can tell "bob@example.com" from "no
+// contact email", and a genuinely NULL column still reports itself unset.
 // TestTuserToModel. The two URI columns and Role, which go through
-// nullStringToString, are unaffected.
+// nullStringToString, still collapse NULL and "" to "".
 package model
 
 import (
@@ -171,9 +172,8 @@ func TestTuserToModel(t *testing.T) {
 			t.Errorf("CallbackServiceWsdlUri = %q", got.CallbackServiceWsdlUri)
 		}
 
-		// Documented defect: the NullString fields carry the text but report
-		// themselves as unset, so they marshal as JSON null and a client cannot
-		// tell "bob@example.com" from "no contact email".
+		// A non-NULL column carries its text and reports itself set, so a
+		// client can tell "bob@example.com" from "no contact email".
 		for _, tc := range []struct {
 			name string
 			got  NullString
@@ -186,15 +186,15 @@ func TestTuserToModel(t *testing.T) {
 			if tc.got.String != tc.text {
 				t.Errorf("%s.String = %q, want %q", tc.name, tc.got.String, tc.text)
 			}
-			if tc.got.Valid {
-				t.Errorf("%s.Valid is true; nullStringFromSQL was fixed - update this test", tc.name)
+			if !tc.got.Valid {
+				t.Errorf("%s.Valid is false; a non-NULL column must decode as set", tc.name)
 			}
 			b, err := json.Marshal(tc.got)
 			if err != nil {
 				t.Fatalf("json.Marshal(%s): %v", tc.name, err)
 			}
-			if string(b) != "null" {
-				t.Errorf("%s marshals as %s, want null", tc.name, b)
+			if want := `"` + tc.text + `"`; string(b) != want {
+				t.Errorf("%s marshals as %s, want %s", tc.name, b, want)
 			}
 		}
 	})
@@ -219,8 +219,10 @@ func TestTuserToModel(t *testing.T) {
 	})
 
 	t.Run("valid_but_empty_columns", func(t *testing.T) {
-		// An empty string stored in the database is not the same as NULL for the
-		// plain-string fields, and is indistinguishable for the NullString ones.
+		// An empty string stored in the database is not NULL, and the two column
+		// shapes are distinguishable: the plain-string fields collapse it to ""
+		// while the NullString ones keep it as a set, empty value, which is what
+		// MarshalJSON renders as the two-character document "".
 		row := dbgen.Tuser{
 			Role:             sql.NullString{String: "", Valid: true},
 			Contactemail:     sql.NullString{String: "", Valid: true},
@@ -230,8 +232,20 @@ func TestTuserToModel(t *testing.T) {
 		if got.Role != "" {
 			t.Errorf("Role = %q", got.Role)
 		}
-		if got.ContactEmail.Valid {
-			t.Error("an empty-but-valid column must not report Valid here")
+		for name, ns := range map[string]NullString{
+			"ContactEmail":     got.ContactEmail,
+			"CallbackUsername": got.CallbackUsername,
+		} {
+			if !ns.Valid || ns.String != "" {
+				t.Errorf("%s = %+v, want a set, empty value", name, ns)
+			}
+			b, err := json.Marshal(ns)
+			if err != nil {
+				t.Fatalf("json.Marshal(%s): %v", name, err)
+			}
+			if string(b) != `""` {
+				t.Errorf("%s marshals as %s, want \"\"", name, b)
+			}
 		}
 	})
 

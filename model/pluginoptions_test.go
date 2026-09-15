@@ -11,23 +11,20 @@
 // through: the row structs, their tags, and the conversion helpers
 // nullStringFromSQL / nullStringToSQL / nullStringToString / stringToNullString.
 //
-// # Defect documented here (pinned, not fixed)
+// # Boundary pinned here (these used to be documented defects)
 //
-// NewNullStringValue (nullstring.go:16-20) sets String but leaves Valid false,
-// and nullStringFromSQL (plugins.go:37-42) builds every positive result with it.
-// The consequences, all pinned below:
+// NewNullStringValue (nullstring.go:16-20) sets String and Valid, and
+// nullStringFromSQL (plugins.go:37-42) builds every positive result with it. The
+// consequences, all pinned below:
 //
-//   - json.Marshal(NewNullStringValue("x")) is the literal null, not "x";
-//   - nullStringFromSQL(sql.NullString{String: "x", Valid: true}) returns a
-//     value that marshals as null, so a non-NULL inputformat/outputformat
-//     column read through GetPluginsForCategory/GetPluginOptions is reported to
-//     clients as unset;
-//   - the round trip through nullStringFromSQL(nullStringToSQL(v)) loses the
-//     text for any value whose Valid was never set, which is exactly the shape
+//   - json.Marshal(NewNullStringValue("x")) is "x", not the literal null;
+//   - nullStringFromSQL(sql.NullString{String: "x", Valid: true}) returns a value
+//     marked set, so a non-NULL inputformat/outputformat column read through
+//     GetPluginsForCategory/GetPluginOptions is reported to clients as the text
+//     it holds;
+//   - the round trip nullStringToSQL(nullStringFromSQL(v)) preserves the text
+//     and the flag for any value whose Valid is set, which is the shape
 //     api/file.go and client/client.go exchange.
-//
-// The fix is one line (`v.Valid = true`), which is why the behaviour is pinned
-// rather than worked around.
 package model
 
 import (
@@ -38,30 +35,35 @@ import (
 )
 
 func TestNewNullStringValueIsInvalid(t *testing.T) {
-	// Documented defect: the constructor does not mark its result valid.
+	// The constructor marks its result valid, so what it carries is a real,
+	// non-NULL value and it is distinguishable on the wire from the zero value.
+	// (Historical name: this test used to pin the dropped flag.)
 	v := NewNullStringValue("render/text")
 	if v.String != "render/text" {
 		t.Errorf("String = %q, want render/text", v.String)
 	}
-	if v.Valid {
-		t.Fatal("Valid is true; the constructor was fixed - update this test")
+	if !v.Valid {
+		t.Fatal("Valid is false; the constructor must mark the value it carries as set")
 	}
 
 	b, err := json.Marshal(v)
 	if err != nil {
 		t.Fatalf("json.Marshal: %v", err)
 	}
-	if string(b) != "null" {
-		t.Errorf("json.Marshal(NewNullStringValue(%q)) = %s, want null", v.String, b)
+	if string(b) != `"render/text"` {
+		t.Errorf("json.Marshal(NewNullStringValue(%q)) = %s, want \"render/text\"", v.String, b)
 	}
 
-	// The zero value and the constructed value are indistinguishable on the wire.
+	// The zero value still reports itself unset, and the two now differ.
 	zero, err := json.Marshal(NullString{})
 	if err != nil {
 		t.Fatalf("json.Marshal: %v", err)
 	}
-	if string(zero) != string(b) {
-		t.Errorf("constructed value (%s) and zero value (%s) differ", b, zero)
+	if string(zero) != "null" {
+		t.Errorf("json.Marshal(NullString{}) = %s, want null", zero)
+	}
+	if string(zero) == string(b) {
+		t.Errorf("constructed value (%s) and zero value (%s) are indistinguishable", b, zero)
 	}
 }
 
@@ -84,17 +86,17 @@ func TestNullStringFromSQL(t *testing.T) {
 			name:     "valid_non_empty",
 			in:       sql.NullString{String: "render/text", Valid: true},
 			wantText: "render/text",
-			// Documented defect: the text is carried but Valid is dropped, so the
-			// value reports itself as unset and marshals as null.
-			wantValid: false,
-			wantJSON:  "null",
+			// The text and the flag both come through, so the column is no
+			// longer reported to clients as unset.
+			wantValid: true,
+			wantJSON:  `"render/text"`,
 		},
 		{
 			name:      "valid_empty",
 			in:        sql.NullString{String: "", Valid: true},
 			wantText:  "",
-			wantValid: false,
-			wantJSON:  "null",
+			wantValid: true,
+			wantJSON:  `""`,
 		},
 	}
 	for _, tc := range cases {
@@ -127,10 +129,12 @@ func TestNullStringToSQL(t *testing.T) {
 		{name: "zero_value", in: NullString{}, wantText: "", wantValid: false},
 		{name: "valid", in: validNullString("sftp"), wantText: "sftp", wantValid: true},
 		{
+			// A value straight out of NewNullStringValue is a real value: the
+			// text is kept, not dropped as an unset field.
 			name:      "text_without_valid_is_dropped",
 			in:        NewNullStringValue("sftp"),
-			wantText:  "",
-			wantValid: false,
+			wantText:  "sftp",
+			wantValid: true,
 		},
 	}
 	for _, tc := range cases {
@@ -145,17 +149,23 @@ func TestNullStringToSQL(t *testing.T) {
 
 func TestNullStringHelperRoundTrips(t *testing.T) {
 	t.Run("sql_to_model_to_sql_loses_valid_rows", func(t *testing.T) {
-		// Documented defect chain: nullStringFromSQL routes a valid row through
-		// NewNullStringValue, which drops Valid; nullStringToSQL then treats the
-		// model value as unset and returns SQL NULL. The stored text is gone.
+		// Historical name. The chain used to route a valid row through a
+		// constructor that dropped Valid, after which nullStringToSQL treated
+		// the model value as unset and returned SQL NULL - the stored text was
+		// gone. The round trip now preserves both the text and the flag.
 		in := sql.NullString{String: "text", Valid: true}
 		out := nullStringToSQL(nullStringFromSQL(in))
-		if out != (sql.NullString{}) {
-			t.Fatalf("round trip = %+v; if the Valid flag is now preserved, update this test", out)
+		if out != in {
+			t.Fatalf("round trip = %+v, want %+v", out, in)
+		}
+		// And the model value in between is itself a set value.
+		if mid := nullStringFromSQL(in); !mid.Valid || mid.String != "text" {
+			t.Errorf("nullStringFromSQL(%+v) = %+v, want the text marked set", in, mid)
 		}
 	})
 
 	t.Run("model_to_sql_keeps_text_but_model_return_loses_valid", func(t *testing.T) {
+		// Historical name: the model return used to lose Valid.
 		in := validNullString("text")
 		viaSQL := nullStringToSQL(in)
 		if viaSQL != (sql.NullString{String: "text", Valid: true}) {
@@ -165,13 +175,13 @@ func TestNullStringHelperRoundTrips(t *testing.T) {
 		if out.String != "text" {
 			t.Errorf("text = %q, want text", out.String)
 		}
-		if out.Valid {
-			t.Error("Valid survived; update this test if nullStringFromSQL was fixed")
+		if !out.Valid {
+			t.Error("the model value came back unset; nullStringFromSQL must keep the flag")
 		}
 	})
 
 	t.Run("sql_null_survives_both_directions", func(t *testing.T) {
-		// The NULL case is the one the helpers get right.
+		// SQL NULL stays NULL: no text is invented and the flag stays clear.
 		if got := nullStringToSQL(nullStringFromSQL(sql.NullString{})); got.Valid || got.String != "" {
 			t.Errorf("NULL round trip = %+v, want the zero value", got)
 		}
@@ -282,12 +292,13 @@ func TestPluginOptionsModelJSON(t *testing.T) {
 		t.Errorf("JSON:\n got: %s\nwant: %s", got, want)
 	}
 
-	// A helper-built InputFormat is indistinguishable from an unset one.
+	// A helper-built InputFormat reports the column's text, which is what
+	// GetPluginOptions hands a client for a non-NULL inputformat column.
 	got, err = json.Marshal(PluginOptionsModel{InputFormat: nullStringFromSQL(sql.NullString{String: "x12xml", Valid: true})})
 	if err != nil {
 		t.Fatalf("json.Marshal: %v", err)
 	}
-	if want := `"InputFormat":null`; !containsJSONFragment(t, string(got), want) {
+	if want := `"InputFormat":"x12xml"`; !containsJSONFragment(t, string(got), want) {
 		t.Errorf("a non-NULL column is reported as unset: %s", got)
 	}
 }

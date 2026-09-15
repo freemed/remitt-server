@@ -10,26 +10,26 @@
 // TestDatabaseBoundAPIRequiresDatabase in models_test.go for the functions that
 // cannot be tested without one.
 //
-// # Defects documented here (pinned, not fixed)
+// # Boundary pinned here (each of these used to be a documented defect)
 //
-//  1. NullString.UnmarshalJSON has a VALUE receiver (nullstring.go:29), so
-//     unmarshalling into a *NullString - including into any struct field, which
-//     is how api/payload.go:26 and api/api.go decode payloads - is a silent
-//     no-op: the document always decodes to the zero value and no error is
-//     reported. TestNullStringUnmarshalJSONIsANoOp.
-//  2. NullString.MarshalJSON uses strconv.QuoteToASCII (nullstring.go:26), which
-//     emits Go escapes. For the two characters whose Go escape is not a legal
-//     JSON escape (\a U+0007 and \v U+000B) the returned bytes are rejected by
-//     encoding/json, so json.Marshal of any structure containing such a
-//     NullString fails outright.
-//     TestNullStringMarshalJSONRejectsGoOnlyEscapes.
-//  3. NullTime.UnmarshalJSON rejects the JSON literal null with a parse error
-//     (nulltime.go:36-45) instead of treating it as "no value"; it also accepts
-//     any JSON value shorter than 3 bytes as a silent "invalid" with no error,
-//     so `""` and `1` are swallowed while `null` and `1234` are hard errors.
+//  1. NullString.UnmarshalJSON is declared on a POINTER receiver, so decoding
+//     into a *NullString - including into any struct field, which is how
+//     api/payload.go:26 and api/api.go decode payloads - writes the document
+//     through. A JSON string marks the value set; the literal null clears it;
+//     number, bool, array and object are still errors.
+//     TestNullStringUnmarshalJSONIsANoOp (historical name: the test used to pin
+//     the silent no-op a value receiver made of every decode).
+//  2. NullString.MarshalJSON emits only escapes the JSON grammar defines, so
+//     json.Marshal succeeds - and the text survives the round trip - for the
+//     control characters MySQL stores that Go's own \a, \v and \xNN escapes
+//     would have rendered as invalid JSON.
+//     TestNullStringMarshalJSONRejectsGoOnlyEscapes (historical name).
+//  3. NullTime.UnmarshalJSON treats the JSON literal null as "no value" and
+//     rejects every other document it cannot parse, so short junk (`""`, `1`,
+//     `0`) is no longer swallowed as a silent "invalid".
 //     TestNullTimeUnmarshalJSONNullAndShortInputs.
 //
-// The NewNullStringValue defect (nullstring.go:16-20) and the conversion
+// The NewNullStringValue constructor (nullstring.go:16-20) and the conversion
 // helpers that depend on it are pinned in pluginoptions_test.go.
 package model
 
@@ -93,12 +93,14 @@ func TestNullStringMarshalJSON(t *testing.T) {
 }
 
 func TestNullStringMarshalJSONRejectsGoOnlyEscapes(t *testing.T) {
-	// Documented defect: strconv.QuoteToASCII (nullstring.go:26) renders the
-	// characters below with Go escapes that JSON does not define: U+0007 -> \a,
-	// U+000B -> \v, and every other unprintable ASCII byte (U+0000-U+0006,
-	// U+000E-U+001F and U+007F) as \xNN. The bytes MarshalJSON returns are then
-	// rejected by encoding/json, so json.Marshal reports an error and produces NO
-	// output at all for a value that is perfectly storable in MySQL.
+	// These are the characters Go's own quoting renders with escapes JSON does
+	// not define: U+0007 -> \a, U+000B -> \v, and every other unprintable ASCII
+	// byte (U+0000-U+0006, U+000E-U+001F and U+007F) as \xNN. MarshalJSON used
+	// to emit them verbatim through strconv.QuoteToASCII, and encoding/json
+	// then rejected the bytes, so json.Marshal reported an error and produced NO
+	// output at all for a value that is perfectly storable in MySQL. It must now
+	// emit valid JSON that round-trips the character. (Historical name: the case
+	// used to pin the rejection.)
 	cases := []struct {
 		name string
 		in   string
@@ -118,49 +120,61 @@ func TestNullStringMarshalJSONRejectsGoOnlyEscapes(t *testing.T) {
 			if err != nil {
 				t.Fatalf("MarshalJSON returned an error for %q: %v", tc.in, err)
 			}
-			if json.Valid(raw) {
-				t.Fatalf("fixture no longer reproduces the defect: MarshalJSON(%q) = %s is valid JSON", tc.in, raw)
-			}
-			if !strings.Contains(string(raw), `\`) {
-				t.Fatalf("expected a Go-style escape in %s", raw)
+			if !json.Valid(raw) {
+				t.Fatalf("MarshalJSON(%q) = %s is not valid JSON", tc.in, raw)
 			}
 
 			out, err := json.Marshal(ns)
-			if err == nil {
-				t.Fatalf("json.Marshal unexpectedly succeeded with %s", out)
+			if err != nil {
+				t.Fatalf("json.Marshal(%q) returned %v", tc.in, err)
 			}
-			if !strings.Contains(err.Error(), "error calling MarshalJSON for type model.NullString") {
-				t.Errorf("unexpected error text: %v", err)
+			if string(out) != string(raw) {
+				t.Errorf("json.Marshal = %s, MarshalJSON = %s", out, raw)
 			}
 
-			// The failure is contagious: any structure holding the value fails.
+			// The character has to survive the round trip, on its own and as a
+			// struct field - the failure was contagious, so the fix must not be
+			// local either.
+			var back NullString
+			if err := json.Unmarshal(out, &back); err != nil {
+				t.Fatalf("json.Unmarshal(%s): %v", out, err)
+			}
+			if !back.Valid || back.String != tc.in {
+				t.Errorf("round trip through NullString = %+v, want %q", back, tc.in)
+			}
+
 			type wrapper struct {
 				F NullString `json:"f"`
 			}
-			if _, err := json.Marshal(wrapper{F: ns}); err == nil {
-				t.Error("expected a struct containing the value to fail as well")
+			var w wrapper
+			if err := json.Unmarshal([]byte(`{"f":`+string(out)+`}`), &w); err != nil {
+				t.Fatalf("json.Unmarshal into a struct field: %v", err)
+			}
+			if !w.F.Valid || w.F.String != tc.in {
+				t.Errorf("round trip through a struct field = %+v, want %q", w.F, tc.in)
 			}
 		})
 	}
 }
 
 func TestNullStringUnmarshalJSONIsANoOp(t *testing.T) {
-	// Documented defect: UnmarshalJSON is declared on the value receiver
-	// (nullstring.go:29), so it edits a copy - the delegate call it makes is
-	// json.Unmarshal(b, &s.String) against that copy. Two things follow, and
-	// this table pins both: a document the delegate accepts (a string or null)
-	// decodes silently to NOTHING, and a document it rejects returns an error
-	// even though nothing could have been written anyway. In no case does the
-	// destination NullString change - which is how a valid client payload can
-	// silently lose its original_id.
+	// UnmarshalJSON is declared on the POINTER receiver, so the decoded value
+	// reaches the destination. Three things follow, and this table pins all of
+	// them: a JSON string (including "") decodes to that text marked set, the
+	// literal null clears the value, and a document the delegate rejects returns
+	// its error while leaving the destination untouched - which is how a valid
+	// client payload keeps its original_id. (Historical name: this test used to
+	// pin the silent no-op a value receiver made of every decode.)
 	cases := []struct {
 		name      string
 		doc       string
+		wantText  string
+		wantValid bool
 		wantError string
 	}{
-		{name: "string", doc: `"hello"`},
-		{name: "empty_string", doc: `""`},
-		{name: "null", doc: `null`},
+		{name: "string", doc: `"hello"`, wantText: "hello", wantValid: true},
+		{name: "empty_string", doc: `""`, wantText: "", wantValid: true},
+		{name: "null", doc: `null`, wantText: "", wantValid: false},
 		{name: "number", doc: `5`, wantError: "cannot unmarshal number into Go value of type string"},
 		{name: "bool", doc: `true`, wantError: "cannot unmarshal bool into Go value of type string"},
 		{name: "array", doc: `[1,2]`, wantError: "cannot unmarshal array into Go value of type string"},
@@ -175,16 +189,21 @@ func TestNullStringUnmarshalJSONIsANoOp(t *testing.T) {
 			err := json.Unmarshal([]byte(tc.doc), &ns)
 			if tc.wantError != "" {
 				if err == nil {
-					t.Fatalf("document %s unexpectedly decoded; the value receiver was fixed - update this test", tc.doc)
+					t.Fatalf("document %s decoded without an error", tc.doc)
 				}
 				if !strings.Contains(err.Error(), tc.wantError) {
 					t.Errorf("error = %v, want it to contain %q", err, tc.wantError)
 				}
-			} else if err != nil {
+				if ns.Valid || ns.String != "" {
+					t.Fatalf("a rejected document populated the value: %+v", ns)
+				}
+				return
+			}
+			if err != nil {
 				t.Fatalf("json.Unmarshal(%s) returned %v", tc.doc, err)
 			}
-			if ns.Valid || ns.String != "" {
-				t.Fatalf("document %s populated the value (%+v); the value receiver was fixed - update this test", tc.doc, ns)
+			if ns.String != tc.wantText || ns.Valid != tc.wantValid {
+				t.Fatalf("document %s decoded to %+v, want {%q %v}", tc.doc, ns, tc.wantText, tc.wantValid)
 			}
 		})
 	}
@@ -202,18 +221,28 @@ func TestNullStringUnmarshalJSONIsANoOp(t *testing.T) {
 		if p.Body != "DATA" {
 			t.Errorf("ordinary string field = %q, want DATA", p.Body)
 		}
-		if p.OriginalID.Valid || p.OriginalID.String != "" {
-			t.Errorf("original_id decoded to %+v; the value-receiver defect is fixed - update this test", p.OriginalID)
+		if !p.OriginalID.Valid || p.OriginalID.String != "T-1" {
+			t.Errorf("original_id decoded to %+v, want the text T-1 marked set", p.OriginalID)
 		}
 	})
 
-	t.Run("an_already_valid_value_is_left_alone", func(t *testing.T) {
+	t.Run("an_already_valid_value_is_replaced", func(t *testing.T) {
 		ns := validNullString("kept")
 		if err := json.Unmarshal([]byte(`"replaced"`), &ns); err != nil {
 			t.Fatalf("json.Unmarshal: %v", err)
 		}
+		if ns.String != "replaced" || !ns.Valid {
+			t.Errorf("value = %+v, want the newly decoded text", ns)
+		}
+	})
+
+	t.Run("a_rejected_document_leaves_the_value_alone", func(t *testing.T) {
+		ns := validNullString("kept")
+		if err := json.Unmarshal([]byte(`5`), &ns); err == nil {
+			t.Fatal("expected an error decoding a number into a NullString")
+		}
 		if ns.String != "kept" || !ns.Valid {
-			t.Errorf("value = %+v, want the pre-existing value untouched (no-op)", ns)
+			t.Errorf("value = %+v, want the pre-existing value untouched", ns)
 		}
 	})
 }
@@ -328,16 +357,15 @@ func TestNullInt64UnmarshalJSON(t *testing.T) {
 		{name: "null_clears", doc: `null`, wantInt: 0, wantValid: false},
 		{name: "object_form_upper", doc: `{"Int64":7,"Valid":true}`, wantInt: 7, wantValid: true},
 		{name: "object_form_lower", doc: `{"int64":7,"valid":true}`, wantInt: 7, wantValid: true},
-		// Documented quirk: the object branch delegates to sql.NullInt64 and then
-		// overwrites Valid with `err == nil` (nullint.go:43), so the document's
-		// own Valid field is ignored - {"Int64":0,"Valid":false} would decode as
-		// valid. The `{}` case shows the same: nothing in the document is
-		// required for the result to claim validity.
+		// The object branch takes the document's own Valid field as authoritative
+		// instead of overwriting it with the decode's success (nullint.go:43),
+		// so {"Int64":0,"Valid":false} and {} decode as INVALID - nothing has to
+		// be present in the document for the result to claim validity.
 		{name: "object_form_without_valid_field", doc: `{"Int64":7}`,
-			wantInt: 7, wantValid: true},
+			wantInt: 7, wantValid: false},
 		{name: "object_form_explicitly_invalid", doc: `{"Int64":0,"Valid":false}`,
-			wantInt: 0, wantValid: true},
-		{name: "empty_object", doc: `{}`, wantInt: 0, wantValid: true},
+			wantInt: 0, wantValid: false},
+		{name: "empty_object", doc: `{}`, wantInt: 0, wantValid: false},
 		{name: "fractional_number_rejected", doc: `5.5`,
 			wantErr: "json: cannot unmarshal number 5.5 into Go value of type int64"},
 		{name: "exponent_number_rejected", doc: `1e3`,
@@ -545,17 +573,20 @@ func TestNullTimeScanAndValue(t *testing.T) {
 	})
 
 	t.Run("scan_other_types_silently_invalidate", func(t *testing.T) {
-		// Documented behaviour: Scan is a comma-ok type assertion
-		// (nulltime.go:14-17), so any non-time.Time value (the string and []byte
-		// forms a driver may hand back for a DATETIME column) clears the value
-		// and reports SUCCESS. There is no error to notice.
+		// Scan only represents the two driver.Value kinds a DATETIME column can
+		// hand back: nil for SQL NULL and time.Time for a parsed value (model
+		// db.go sets parseTime=true). Any other type used to clear the field and
+		// report SUCCESS - nulltime.go:14-17 was a bare comma-ok assertion, so a
+		// string or []byte form silently voided the row's data with no error to
+		// notice. It is an error now. (Historical name: this case used to pin
+		// the silence.)
 		for _, in := range []any{"2024-01-02T15:04:05Z", []byte("2024-01-02 15:04:05"), int64(1704207845), 3.5} {
 			var nt NullTime
-			if err := nt.Scan(in); err != nil {
-				t.Errorf("Scan(%#v) returned %v; the assertion is comma-ok and never errors", in, err)
+			if err := nt.Scan(in); err == nil {
+				t.Errorf("Scan(%#v) silently accepted a value it cannot represent", in)
 			}
-			if nt.Valid {
-				t.Errorf("Scan(%#v) reported Valid=true", in)
+			if nt.Valid || !nt.Time.IsZero() {
+				t.Errorf("Scan(%#v) left %+v behind after an error", in, nt)
 			}
 		}
 	})
@@ -673,45 +704,46 @@ func TestNullTimeUnmarshalJSON(t *testing.T) {
 }
 
 func TestNullTimeUnmarshalJSONNullAndShortInputs(t *testing.T) {
-	// Documented defect: the JSON literal null is not special-cased. It is four
-	// bytes long, so it reaches time.Parse and fails - json.Unmarshal returns an
-	// error for what every other decoder treats as "no value". Inputs SHORTER
-	// than three bytes take the early return at nulltime.go:37-40 and are
-	// silently accepted as "invalid", so `""` and `1` behave differently from
-	// `null` even though all three mean the same thing to a caller.
+	// The JSON literal null is special-cased: it means "no value" and clears the
+	// receiver, exactly as it does for the other null* types and for every other
+	// decoder. Inputs SHORTER than three bytes no longer take an early return and
+	// get silently accepted as "invalid": anything that is not an RFC3339
+	// timestamp is a parse error, so `""` and `1` behave like every other
+	// unparseable document.
 	t.Run("null_is_an_error", func(t *testing.T) {
-		var nt NullTime
+		// Historical name: null used to be a four-byte document that reached
+		// time.Parse and failed; it is now the "no value" document.
+		nt := NullTime{Time: time.Now(), Valid: true}
 		err := json.Unmarshal([]byte(`null`), &nt)
-		if err == nil {
-			t.Fatal("expected the null literal to fail; update this test if it is fixed")
+		if err != nil {
+			t.Fatalf("json.Unmarshal(null) returned %v", err)
 		}
-		if !strings.Contains(err.Error(), "parsing time") {
-			t.Errorf("error = %v, want a time.Parse error", err)
-		}
-		if nt.Valid {
-			t.Error("value is valid after a failed parse")
+		if nt.Valid || !nt.Time.IsZero() {
+			t.Errorf("value = %+v, want the zero value after a null document", nt)
 		}
 	})
 
 	t.Run("null_inside_a_struct_fails_the_whole_document", func(t *testing.T) {
+		// Historical name: a null timestamp used to fail the whole document.
 		type doc struct {
 			T NullTime `json:"t"`
 		}
-		var d doc
+		d := doc{T: NullTime{Time: time.Now(), Valid: true}}
 		err := json.Unmarshal([]byte(`{"t":null}`), &d)
-		if err == nil {
-			t.Fatal("expected the whole document to fail on a null timestamp")
+		if err != nil {
+			t.Fatalf("json.Unmarshal: %v", err)
 		}
-		if !strings.Contains(err.Error(), "parsing time") {
-			t.Errorf("error = %v", err)
+		if d.T.Valid || !d.T.Time.IsZero() {
+			t.Errorf("field = %+v, want the zero value", d.T)
 		}
 	})
 
 	t.Run("short_inputs_are_silently_invalid", func(t *testing.T) {
+		// Historical name: these used to be accepted silently.
 		for _, in := range []string{`""`, `1`, `0`} {
 			var nt NullTime
-			if err := json.Unmarshal([]byte(in), &nt); err != nil {
-				t.Errorf("json.Unmarshal(%s) returned %v; inputs under three bytes take the silent path", in, err)
+			if err := json.Unmarshal([]byte(in), &nt); err == nil {
+				t.Errorf("json.Unmarshal(%s) was swallowed; want a parse error", in)
 			}
 			if nt.Valid {
 				t.Errorf("json.Unmarshal(%s) produced a valid value", in)
@@ -720,10 +752,13 @@ func TestNullTimeUnmarshalJSONNullAndShortInputs(t *testing.T) {
 	})
 
 	t.Run("null_does_not_need_a_prior_valid_value", func(t *testing.T) {
-		// Even a freshly parsed value cannot be cleared with null.
+		// A freshly parsed value clears with null just as a stale one does.
 		nt := NullTime{Time: time.Now(), Valid: true}
-		if err := json.Unmarshal([]byte(`null`), &nt); err == nil {
-			t.Errorf("expected an error; got %+v", nt)
+		if err := json.Unmarshal([]byte(`null`), &nt); err != nil {
+			t.Fatalf("json.Unmarshal(null): %v", err)
+		}
+		if nt.Valid {
+			t.Errorf("value = %+v, want Valid=false", nt)
 		}
 	})
 }
