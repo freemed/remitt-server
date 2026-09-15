@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"text/template"
 	"time"
 
 	"github.com/freemed/remitt-server/crypto"
@@ -25,15 +24,29 @@ const (
 	// GatewayEDI SOAP endpoint URL.
 	gatewayEdiServiceURIOption = "gatewayEdiServiceUri"
 
+	// gatewayEdiUsernameOption and gatewayEdiPasswordOption are the tUserConfig
+	// options (tUserConfig.cOption) holding the GatewayEDI account credentials.
+	// They are sent as HTTP Basic auth, which is what the Java 0.5.x plugin
+	// does by setting Call.USERNAME_PROPERTY / Call.PASSWORD_PROPERTY on the
+	// Axis stub (GatewayEDIEligibility.java:139-143).
+	gatewayEdiUsernameOption = "gatewayEdiUsername"
+	gatewayEdiPasswordOption = "gatewayEdiPassword"
+
 	// gatewayEdiSoapTimeout is the HTTP timeout for the SOAP POST. It matches
 	// the 30s timeout used by callback/soap.go (defaultTimeout) and stedi.go
 	// (StediTimeout).
 	gatewayEdiSoapTimeout = 30 * time.Second
 
-	// gatewayEdiSoapAction follows the SOAPAction convention used by
-	// callback/soap.go: "<target namespace>/<SOAP body element>", taken from
-	// the envelope built by buildSoapEnvelope.
-	gatewayEdiSoapAction = "urn:remitt:eligibility/eligibilityRequest"
+	// gatewayEdiSoapAction is the SOAPAction the vendor WSDL declares for the
+	// DoInquiry operation:
+	//
+	//	<wsdl:operation name="DoInquiry">
+	//	  <soap:operation soapAction="GatewayEDI.WebServices/DoInquiry" style="document"/>
+	//
+	// (https://services.gatewayedi.com/eligibility/service.asmx?WSDL, binding
+	// EligibilitySoap, port EligibilitySoap). SOAP 1.1 requires the SOAPAction
+	// header for a document/literal call.
+	gatewayEdiSoapAction = "GatewayEDI.WebServices/DoInquiry"
 
 	// gatewayEdiMaxResponseBytes bounds how much of the SOAP response is read
 	// (1 MiB), matching the limit used by optum.go.
@@ -71,6 +84,116 @@ const (
 	gatewayEdiRawResponseElement = "ResponseAsRawString"
 )
 
+// GatewayEDI DoInquiry request element names, taken from the vendor WSDL at
+// https://services.gatewayedi.com/eligibility/service.asmx?WSDL.
+//
+// The schema is declared elementFormDefault="qualified" with
+// targetNamespace="GatewayEDI.WebServices", so every element of the request
+// body lives in that namespace. The WSDL declares:
+//
+//	<s:element name="DoInquiry">
+//	  <s:complexType><s:sequence>
+//	    <s:element minOccurs="0" maxOccurs="1" name="Inquiry" type="tns:WSEligibilityInquiry" />
+//	  </s:sequence></s:complexType>
+//	</s:element>
+//	<s:complexType name="WSEligibilityInquiry"><s:sequence>
+//	  <s:element minOccurs="0" maxOccurs="1" name="Parameters" type="tns:ArrayOfMyNameValue" />
+//	  <s:element minOccurs="1" maxOccurs="1" name="ResponseDataType" type="tns:WSResponseDataType" />
+//	</s:sequence></s:complexType>
+//	<s:complexType name="ArrayOfMyNameValue"><s:sequence>
+//	  <s:element minOccurs="0" maxOccurs="unbounded" name="MyNameValue" nillable="true" type="tns:MyNameValue" />
+//	</s:sequence></s:complexType>
+//	<s:complexType name="MyNameValue"><s:sequence>
+//	  <s:element minOccurs="0" maxOccurs="1" name="Name" type="s:string" />
+//	  <s:element minOccurs="0" maxOccurs="1" name="Value" type="s:string" />
+//	</s:sequence></s:complexType>
+//
+// The message DoInquirySoapIn carries the single part "parameters" bound to the
+// element tns:DoInquiry, i.e. the request wrapper element is literally named
+// "DoInquiry" (the portType operation is also named "DoInquiry"; the Java
+// method on the generated stub is doInquiry(...)).
+const (
+	// gatewayEdiInquiryOperationElement is the request wrapper element of the
+	// DoInquiry operation (WSDL element "DoInquiry", message DoInquirySoapIn).
+	gatewayEdiInquiryOperationElement = "DoInquiry"
+
+	// gatewayEdiInquiryContainerElement is the Inquiry child of the request
+	// wrapper (WSDL element "Inquiry", type WSEligibilityInquiry).
+	gatewayEdiInquiryContainerElement = "Inquiry"
+
+	// gatewayEdiInquiryParametersElement is the array wrapper holding the
+	// name/value pairs (WSDL element "Parameters", type ArrayOfMyNameValue).
+	gatewayEdiInquiryParametersElement = "Parameters"
+
+	// gatewayEdiInquiryMyNameValueElement is the repeated array item (WSDL
+	// element "MyNameValue", type MyNameValue, unbounded).
+	gatewayEdiInquiryMyNameValueElement = "MyNameValue"
+
+	// gatewayEdiInquiryNameElement and gatewayEdiInquiryValueElement are the
+	// two strings every MyNameValue carries.
+	gatewayEdiInquiryNameElement  = "Name"
+	gatewayEdiInquiryValueElement = "Value"
+
+	// gatewayEdiInquiryResponseDataTypeElement selects the response
+	// representation (WSDL element "ResponseDataType", type
+	// WSResponseDataType, minOccurs="1").
+	gatewayEdiInquiryResponseDataTypeElement = "ResponseDataType"
+
+	// gatewayEdiResponseDataTypeXml is the WSResponseDataType enumeration value
+	// the Java plugin asks for: inq.setResponseDataType(WSResponseDataType.Xml)
+	// (GatewayEDIEligibility.java:147). The WSDL enumerates exactly "Xml" and
+	// "RawPayerData".
+	gatewayEdiResponseDataTypeXml = "Xml"
+
+	// gatewayEdiSoapEnvelopeNamespace is the SOAP 1.1 envelope namespace; the
+	// WSDL binds the service to SOAP 1.1 over HTTP
+	// (soap:binding transport="http://schemas.xmlsoap.org/soap/http").
+	gatewayEdiSoapEnvelopeNamespace = "http://schemas.xmlsoap.org/soap/envelope/"
+
+	// gatewayEdiSoapPrefix and gatewayEdiWebServicesPrefix are the prefixes
+	// used for the two namespaces of the request document. The gateway parses
+	// by namespace, not by prefix.
+	gatewayEdiSoapPrefix        = "soapenv"
+	gatewayEdiWebServicesPrefix = "gw"
+)
+
+// gatewayEdiInquiryParameter is one name/value pair of the DoInquiry request:
+// the key in the eligibility request's values map, and the GatewayEDI
+// parameter Name it is sent under.
+type gatewayEdiInquiryParameter struct {
+	Key  string // key in the EligibilityChecker values map
+	Name string // GatewayEDI parameter name (MyNameValue/Name)
+}
+
+// gatewayEdiInquiryParameters is the payer/provider/subscriber/patient payload
+// of the DoInquiry request, in the exact order and under the exact GatewayEDI
+// names the Java 0.5.x GatewayEDIEligibility builds with addNameValue
+// (GatewayEDIEligibility.java:87-137). The keys are the EligibilityParameter
+// enum values declared by org.remitt.prototype.EligibilityParameter (npi,
+// insuranceId, insuredLastName, ... groupId), which is the vocabulary the
+// eligibility request's values map uses.
+//
+// addNameValue only appends a pair when the caller supplied that parameter, so
+// a key the request does not carry contributes no element to the body.
+var gatewayEdiInquiryParameters = []gatewayEdiInquiryParameter{
+	{Key: "npi", Name: "NPI"},                                         // Java:88-89
+	{Key: "insuranceId", Name: "InsuranceNum"},                        // Java:90-91
+	{Key: "insuredLastName", Name: "InsuredLastName"},                 // Java:92-94
+	{Key: "insuredFirstName", Name: "InsuredFirstName"},               // Java:95-97
+	{Key: "insuredDateOfBirth", Name: "InsuredDob"},                   // Java:98-100
+	{Key: "insuredGender", Name: "InsuredGender"},                     // Java:101-103
+	{Key: "insuredState", Name: "InsuredState"},                       // Java:104-106
+	{Key: "insuredSsn", Name: "InsuredSsn"},                           // Java:107-109
+	{Key: "dependentLastName", Name: "DependentLastName"},             // Java:110-112
+	{Key: "dependentFirstName", Name: "DependentFirstName"},           // Java:113-117
+	{Key: "dependentDateOfBirth", Name: "DependentDob"},               // Java:118-120
+	{Key: "dependentGender", Name: "DependentGender"},                 // Java:121-123
+	{Key: "dependentRelationship", Name: "DependentRelationshipCode"}, // Java:124-128
+	{Key: "serviceType", Name: "ServiceTypeCode"},                     // Java:129-131
+	{Key: "cardIssueDate", Name: "CardIssueDate"},                     // Java:132-134
+	{Key: "groupId", Name: "GroupNumber"},                             // Java:135-137
+}
+
 // gatewayEdiSuccessCodeMapping is the exact (Status, SuccessCode) pair the
 // Java 0.5.x GatewayEDIEligibility plugin reports for a GatewayEDI SuccessCode
 // value.
@@ -105,10 +228,17 @@ var gatewayEdiSuccessCodeMappings = map[string]gatewayEdiSuccessCodeMapping{
 // GatewayEDIEligibility implements the EligibilityChecker interface for
 // the GatewayEDI SOAP-based eligibility service.
 //
-// Flow: values → buildSoapEnvelope → PGP encrypt with user's GatewayEDI
-// public key → SOAP HTTP POST to gatewayEdiServiceUri → PGP decrypt the
+// Flow: values → buildSoapEnvelope (SOAP 1.1 DoInquiry, plain XML) → SOAP HTTP
+// POST to gatewayEdiServiceUri with HTTP Basic credentials → PGP decrypt the
 // response with the user's private key if it is encrypted → parse SOAP
 // response → EligibilityResponse.
+//
+// The request is not encrypted: the vendor's DoInquiry operation is a plain
+// document/literal SOAP call authenticated with HTTP Basic, exactly as the
+// Java 0.5.x plugin drives the Axis-generated EligibilitySoap stub
+// (GatewayEDIEligibility.java:139-151). PGP is still honoured on the response
+// side, where a gateway that returns an encrypted body can be decrypted with
+// the user's GatewayEDI private key.
 //
 // The response contract follows the Java 0.5.x reference implementation
 // (org.remitt.plugin.eligibility.GatewayEDIEligibility): the gateway's
@@ -133,73 +263,131 @@ func init() {
 	})
 }
 
-// buildSoapEnvelope creates a SOAP request envelope containing the given
-// key-value pairs as elements in the eligibility request body.
-func (g *GatewayEDIEligibility) buildSoapEnvelope(values map[string]string) ([]byte, error) {
-	const soapTmpl = `<?xml version="1.0" encoding="UTF-8"?>
-<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
-  <soapenv:Header/>
-  <soapenv:Body>
-    <eligibilityRequest xmlns="urn:remitt:eligibility">
-      {{range $key, $value := .}}<{{$key}}>{{$value}}</{{$key}}>
-      {{end}}    </eligibilityRequest>
-  </soapenv:Body>
-</soapenv:Envelope>`
+// gatewayEdiNameValue is one resolved MyNameValue pair of the request body.
+type gatewayEdiNameValue struct {
+	Name  string
+	Value string
+}
 
-	tmpl, err := template.New("soap").Parse(soapTmpl)
-	if err != nil {
-		return nil, fmt.Errorf("gatewayedi: parse soap template: %w", err)
+// gatewayEdiInquiryNameValues resolves the caller's eligibility values into the
+// ordered MyNameValue list of the DoInquiry request, following the Java 0.5.x
+// addNameValue behaviour: a parameter the request carries no value for is
+// omitted from the body entirely. (The Java appends the pair whenever the map
+// holds a non-null entry; here a present-but-blank value is dropped rather than
+// sent as an empty element, which the gateway only rejects as a
+// ValidationFailure.)
+//
+// Keys are matched exactly first, then case-insensitively, because the values
+// map is caller-supplied (API payload or stored eligibility job).
+func gatewayEdiInquiryNameValues(values map[string]string) []gatewayEdiNameValue {
+	var pairs []gatewayEdiNameValue
+
+	for _, p := range gatewayEdiInquiryParameters {
+		v, ok := values[p.Key]
+		if !ok {
+			v, ok = gatewayEdiLookupFold(values, p.Key)
+		}
+		if !ok || strings.TrimSpace(v) == "" {
+			continue
+		}
+		pairs = append(pairs, gatewayEdiNameValue{Name: p.Name, Value: v})
 	}
+
+	return pairs
+}
+
+// gatewayEdiLookupFold finds key in values ignoring case, so a request that
+// capitalises a parameter differently still reaches the gateway.
+func gatewayEdiLookupFold(values map[string]string, key string) (string, bool) {
+	for k, v := range values {
+		if strings.EqualFold(k, key) {
+			return v, true
+		}
+	}
+	return "", false
+}
+
+// buildSoapEnvelope creates the SOAP 1.1 DoInquiry request document declared by
+// the vendor WSDL: the envelope carries <DoInquiry><Inquiry>, the Inquiry holds
+// the caller's payer/provider/subscriber/patient values as MyNameValue pairs
+// inside <Parameters>, and ResponseDataType is Xml.
+//
+// Every element is namespace-qualified in GatewayEDI.WebServices
+// (elementFormDefault="qualified" in the WSDL). Values are XML-escaped, so a
+// value containing markup cannot break the document. No PGP encryption is
+// applied to the request.
+func (g *GatewayEDIEligibility) buildSoapEnvelope(values map[string]string) ([]byte, error) {
+	pairs := gatewayEdiInquiryNameValues(values)
+
+	gw := gatewayEdiWebServicesPrefix + ":"
 
 	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, values); err != nil {
-		return nil, fmt.Errorf("gatewayedi: execute soap template: %w", err)
+	buf.WriteString(xml.Header)
+	buf.WriteString(`<` + gatewayEdiSoapPrefix + `:Envelope xmlns:` + gatewayEdiSoapPrefix + `="` + gatewayEdiSoapEnvelopeNamespace + `" xmlns:` + gatewayEdiWebServicesPrefix + `="` + gatewayEdiWebServicesNamespace + `">` + "\n")
+	buf.WriteString(`  <` + gatewayEdiSoapPrefix + `:Header/>` + "\n")
+	buf.WriteString(`  <` + gatewayEdiSoapPrefix + `:Body>` + "\n")
+	buf.WriteString(`    <` + gw + gatewayEdiInquiryOperationElement + `>` + "\n")
+	buf.WriteString(`      <` + gw + gatewayEdiInquiryContainerElement + `>` + "\n")
+	buf.WriteString(`        <` + gw + gatewayEdiInquiryParametersElement + `>` + "\n")
+	for _, pair := range pairs {
+		buf.WriteString(`          <` + gw + gatewayEdiInquiryMyNameValueElement + `>` + "\n")
+		buf.WriteString(`            <` + gw + gatewayEdiInquiryNameElement + `>`)
+		gatewayEdiEscapeXML(&buf, pair.Name)
+		buf.WriteString(`</` + gw + gatewayEdiInquiryNameElement + `>` + "\n")
+		buf.WriteString(`            <` + gw + gatewayEdiInquiryValueElement + `>`)
+		gatewayEdiEscapeXML(&buf, pair.Value)
+		buf.WriteString(`</` + gw + gatewayEdiInquiryValueElement + `>` + "\n")
+		buf.WriteString(`          </` + gw + gatewayEdiInquiryMyNameValueElement + `>` + "\n")
 	}
+	buf.WriteString(`        </` + gw + gatewayEdiInquiryParametersElement + `>` + "\n")
+	buf.WriteString(`        <` + gw + gatewayEdiInquiryResponseDataTypeElement + `>` + gatewayEdiResponseDataTypeXml + `</` + gw + gatewayEdiInquiryResponseDataTypeElement + `>` + "\n")
+	buf.WriteString(`      </` + gw + gatewayEdiInquiryContainerElement + `>` + "\n")
+	buf.WriteString(`    </` + gw + gatewayEdiInquiryOperationElement + `>` + "\n")
+	buf.WriteString(`  </` + gatewayEdiSoapPrefix + `:Body>` + "\n")
+	buf.WriteString(`</` + gatewayEdiSoapPrefix + `:Envelope>` + "\n")
 
 	return buf.Bytes(), nil
 }
 
+// gatewayEdiEscapeXML writes s with XML special characters escaped.
+func gatewayEdiEscapeXML(buf *bytes.Buffer, s string) {
+	_ = xml.EscapeText(buf, []byte(s))
+}
+
 // CheckEligibility runs the GatewayEDI eligibility check: it builds the SOAP
-// envelope, PGP-encrypts it with the user's GatewayEDI public key, POSTs the
-// encrypted payload to the configured gatewayEdiServiceUri, and interprets the
-// (PGP-encrypted, if the gateway encrypts it) SOAP response.
+// 1.1 DoInquiry request from the caller's values, POSTs it to the configured
+// gatewayEdiServiceUri with the configured GatewayEDI credentials as HTTP Basic
+// auth, and interprets the SOAP response.
+//
+// No PGP encryption is applied to the request. The user's GatewayEDI keyring
+// entry is still consulted so that an encrypted response can be decrypted with
+// the private key, but it is no longer required: with ResponseDataType=Xml the
+// gateway answers with plain SOAP XML, and the request itself no longer needs a
+// public key.
 func (g *GatewayEDIEligibility) CheckEligibility(userName string, values map[string]string, resubmission bool, jobID int64) (*EligibilityResponse, error) {
-	// Build the SOAP request envelope.
+	// Build the SOAP request envelope: plain XML, no PGP.
 	envelope, err := g.buildSoapEnvelope(values)
 	if err != nil {
 		return nil, fmt.Errorf("gatewayedi: build envelope: %w", err)
 	}
 
-	// Retrieve the user's GatewayEDI public key from the keyring.
-	key, err := model.GetKeyringEntry(userName, GatewayEDIEligibilityKeyName)
-	if err != nil {
-		return nil, fmt.Errorf("gatewayedi: keyring entry '%s' not found for user '%s': %w",
-			GatewayEDIEligibilityKeyName, userName, err)
-	}
-	if len(key.PublicKey) == 0 {
-		return nil, fmt.Errorf("gatewayedi: keyring entry '%s' for user '%s' has no public key",
-			GatewayEDIEligibilityKeyName, userName)
-	}
-
-	// PGP-encrypt the SOAP request with the user's public key.
-	encryptedPayload, err := crypto.EncryptPGP(envelope, key.PublicKey)
-	if err != nil {
-		return nil, fmt.Errorf("gatewayedi: pgp encrypt: %w", err)
-	}
-
-	// Retrieve the service URI from user configuration.
+	// Retrieve the plugin's options from user configuration.
 	configs, err := model.GetConfigValues(userName)
 	if err != nil {
 		return nil, fmt.Errorf("gatewayedi: get config values: %w", err)
 	}
 
-	serviceUri := ""
+	options := make(map[string]string, len(configs))
 	for _, cfg := range configs {
-		if cfg.Option == gatewayEdiServiceURIOption {
-			serviceUri = cfg.Value
-			break
+		switch cfg.Option {
+		case gatewayEdiServiceURIOption, gatewayEdiUsernameOption, gatewayEdiPasswordOption:
+			options[cfg.Option] = cfg.Value
 		}
 	}
+
+	serviceUri := options[gatewayEdiServiceURIOption]
+	username := options[gatewayEdiUsernameOption]
+	password := options[gatewayEdiPasswordOption]
 
 	// Without an endpoint there is nothing to contact: fail loudly rather than
 	// reporting an eligibility result that was never obtained.
@@ -208,15 +396,29 @@ func (g *GatewayEDIEligibility) CheckEligibility(userName string, values map[str
 			gatewayEdiServiceURIOption, userName)
 	}
 
-	return g.postSoapRequest(serviceUri, encryptedPayload, key.PrivateKey, g.httpClient)
+	// The vendor authenticates DoInquiry with HTTP Basic credentials, so a
+	// missing username or password would only produce an unauthenticated call.
+	if strings.TrimSpace(username) == "" || strings.TrimSpace(password) == "" {
+		return nil, fmt.Errorf("gatewayedi: %s and %s are not configured for user '%s'",
+			gatewayEdiUsernameOption, gatewayEdiPasswordOption, userName)
+	}
+
+	// The response is PGP-decrypted only if the gateway encrypts it, so a
+	// keyring entry is optional for this call.
+	var privateKey []byte
+	if key, keyErr := model.GetKeyringEntry(userName, GatewayEDIEligibilityKeyName); keyErr == nil {
+		privateKey = key.PrivateKey
+	}
+
+	return g.postSoapRequest(serviceUri, username, password, envelope, privateKey, g.httpClient)
 }
 
-// postSoapRequest POSTs an already-PGP-encrypted SOAP payload to serviceUri
-// and interprets the response.
+// postSoapRequest POSTs the SOAP request document to serviceUri with the
+// GatewayEDI credentials as HTTP Basic auth, and interprets the SOAP response.
 //
-// The resolved service URI, payload and key material are passed in, and no
-// database access happens here, so the complete HTTP + PGP-response handling
-// path is unit-testable without a keyring or tUserConfig.
+// The resolved service URI, credentials, payload and key material are passed
+// in, and no database access happens here, so the complete HTTP + PGP-response
+// handling path is unit-testable without a keyring or tUserConfig.
 //
 // Failures that occur before the request is sent (empty URI, unbuildable
 // request, transport error) are returned as Go errors. Failures that occur
@@ -224,7 +426,7 @@ func (g *GatewayEDIEligibility) CheckEligibility(userName string, values map[str
 // not a recognisable SOAP eligibility result) are returned as a response with
 // Status StatusServerError and SuccessCode SuccessCodeSystemError, so callers
 // that only inspect the response still cannot mistake them for success.
-func (g *GatewayEDIEligibility) postSoapRequest(serviceUri string, payload, privateKey []byte, client *http.Client) (*EligibilityResponse, error) {
+func (g *GatewayEDIEligibility) postSoapRequest(serviceUri, username, password string, payload, privateKey []byte, client *http.Client) (*EligibilityResponse, error) {
 	if strings.TrimSpace(serviceUri) == "" {
 		return nil, fmt.Errorf("gatewayedi: %s is not configured", gatewayEdiServiceURIOption)
 	}
@@ -245,9 +447,14 @@ func (g *GatewayEDIEligibility) postSoapRequest(serviceUri string, payload, priv
 	if err != nil {
 		return nil, fmt.Errorf("gatewayedi: create soap request: %w", err)
 	}
-	// Headers follow the convention established by callback/soap.go.
+	// Headers follow the SOAP 1.1 contract declared by the vendor WSDL: a
+	// document/literal POST with the WSDL's SOAPAction, and the GatewayEDI
+	// account credentials as HTTP Basic auth (what the Java 0.5.x plugin
+	// configures on the Axis stub through Call.USERNAME_PROPERTY and
+	// Call.PASSWORD_PROPERTY).
 	req.Header.Set("Content-Type", "text/xml; charset=utf-8")
 	req.Header.Set("SOAPAction", gatewayEdiSoapAction)
+	req.SetBasicAuth(username, password)
 
 	resp, err := client.Do(req)
 	if err != nil {

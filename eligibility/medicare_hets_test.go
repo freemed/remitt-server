@@ -4,12 +4,18 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/xml"
+	"errors"
+	"fmt"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // ---------------------------------------------------------------------------
-// Helper
+// Helpers
 // ---------------------------------------------------------------------------
 
 // newMedicareHETSForTest returns the concrete MedicareHETSEligibility from
@@ -44,6 +50,116 @@ func buildSoapResponseEnvelope(x12271 string) []byte {
   </soap:Body>
 </soap:Envelope>`
 	return []byte(response)
+}
+
+// medicareHetsTestValues returns a minimal, valid set of request values.
+func medicareHetsTestValues() map[string]string {
+	return map[string]string{
+		"memberId":    "M12345678A",
+		"firstName":   "JOHN",
+		"lastName":    "DOE",
+		"dateOfBirth": "19800115",
+		"serviceDate": "20240810",
+	}
+}
+
+// medicareHetsTestConfig returns a fully populated credential set (no CMS
+// credentials are needed or used: the tests below only ever point the plugin
+// at a closed local port or a local test server).
+func medicareHetsTestConfig() medicareHetsConfig {
+	return medicareHetsConfig{
+		username:    "hetsuser",
+		password:    "hetspass",
+		submitterID: "SUBMITTERID",
+		providerNPI: "1234567890",
+	}
+}
+
+// medicareHetsTestX12271ActiveCoverage is a 271 fixture used ONLY to exercise
+// the response parser. Production code must never synthesise one.
+func medicareHetsTestX12271ActiveCoverage() string {
+	return `ISA*00*          *00*          *ZZ*CMSHETS        *ZZ*SUBMITTERID    *240810*1200*^*00501*000000002*0*T*:~
+GS*HB*CMSHETS*SUBMITTERID*20240810*1200*1*X*005010X279A1~
+ST*271*0001*005010X279A1~
+BHT*0022*11*TRACE001*20240810*1200~
+HL*1**20*1~
+NM1*PR*2*MEDICARE*****PI*CMS~
+HL*2*1*21*1~
+NM1*1P*2*TEST PROVIDER*****XX*1234567890~
+HL*3*2*22*0~
+NM1*IL*1*DOE*JOHN****MI*M12345678A~
+TRN*2*TRACE001*1CMS~
+EB*R**30*MA*MEDICARE PART A~
+EB*R**30*MB*MEDICARE PART B~
+EB*1**30*MA*MEDICARE PART A^^ACTIVE COVERAGE~
+EB*1**30*MB*MEDICARE PART B^^ACTIVE COVERAGE~
+SE*16*0001~
+GE*1*1~
+IEA*1*000000002~
+`
+}
+
+// medicareHetsNoNetworkTransport fails the test if the plugin attempts any
+// HTTP call at all.
+type medicareHetsNoNetworkTransport struct{ t *testing.T }
+
+func (tr medicareHetsNoNetworkTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	tr.t.Error("plugin attempted a network call although it could not possibly reach CMS")
+	return nil, errors.New("network call not expected")
+}
+
+func medicareHetsNoNetworkClient(t *testing.T) *http.Client {
+	t.Helper()
+	return &http.Client{
+		Timeout:   time.Second,
+		Transport: medicareHetsNoNetworkTransport{t: t},
+	}
+}
+
+// freeLocalPort returns a TCP port on 127.0.0.1 that nothing is listening on,
+// so connecting to it is refused immediately by the local stack. No CMS/HETS
+// traffic is involved.
+func freeLocalPort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("cannot allocate a local port: %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	if err := ln.Close(); err != nil {
+		t.Fatalf("cannot close the local listener: %v", err)
+	}
+	return port
+}
+
+// assertMedicareHetsServerFailure asserts that resp is an explicit server-side
+// failure carrying a non-empty explanatory message, and that it can never be
+// mistaken for a successful eligibility check.
+func assertMedicareHetsServerFailure(t *testing.T, resp *EligibilityResponse) {
+	t.Helper()
+	if resp == nil {
+		t.Fatal("expected a non-nil failure response, got nil")
+	}
+	if resp.Status != StatusServerError {
+		t.Errorf("Status = %q, want %q (%s)", resp.Status, StatusServerError, StatusServerError)
+	}
+	if resp.SuccessCode != SuccessCodeSystemError {
+		t.Errorf("SuccessCode = %q, want %q (%s)", resp.SuccessCode, SuccessCodeSystemError, SuccessCodeSystemError)
+	}
+	if resp.Status == StatusOK {
+		t.Error("Status must never be OK when CMS was not reached")
+	}
+	if resp.SuccessCode == SuccessCodeSuccess {
+		t.Error("SuccessCode must never be SUCCESS when CMS was not reached")
+	}
+	if len(resp.Messages) == 0 {
+		t.Fatal("expected at least one explanatory message")
+	}
+	for i, msg := range resp.Messages {
+		if strings.TrimSpace(msg) == "" {
+			t.Errorf("Messages[%d] is empty; a failure must explain itself", i)
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -127,9 +243,200 @@ func TestMedicareHETSSetContext(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// CheckEligibility — missing config (requires DB; skip if unavailable)
+// No CMS credentials -> explicit server-side failure
 // ---------------------------------------------------------------------------
 
+// TestMedicareHETSNoCredentialsReportsServerError is the core contract test:
+// with no HETS credentials configured the plugin must report an explicit
+// server-side failure (SERVER_ERROR / SYSTEM_ERROR) with a message naming what
+// is missing, must return an error, must not panic, and must not touch the
+// network or invent an eligibility result.
+func TestMedicareHETSNoCredentialsReportsServerError(t *testing.T) {
+	m := newMedicareHETSForTest(t)
+
+	resp, err := m.checkEligibilityWithConfig(
+		"testuser",
+		medicareHetsTestValues(),
+		medicareHetsConfig{}, // nothing configured at all
+		medicareHetsNoNetworkClient(t),
+	)
+
+	if err == nil {
+		t.Fatal("expected a Go error when no credentials are configured")
+	}
+	assertMedicareHetsServerFailure(t, resp)
+
+	joined := strings.Join(resp.Messages, " ")
+	for _, option := range []string{"hetsUsername", "hetsPassword", "hetsSubmitterId", "hetsProviderNpi"} {
+		if !strings.Contains(joined, option) {
+			t.Errorf("failure message does not name the missing option %q: %s", option, joined)
+		}
+	}
+	if !strings.Contains(err.Error(), "hetsUsername") || !strings.Contains(err.Error(), "hetsPassword") {
+		t.Errorf("error should name the missing credentials, got: %v", err)
+	}
+	if resp.RawResponse != "" {
+		t.Errorf("RawResponse should be empty when nothing was requested, got %q", resp.RawResponse)
+	}
+	if strings.Contains(joined, "MEDICARE PART") || strings.Contains(joined, "EB*") {
+		t.Errorf("failure message must not contain X12 271 benefit data: %s", joined)
+	}
+}
+
+// TestMedicareHETSPartialCredentialsNamesOnlyMissingOptions checks the message
+// lists exactly the options that are absent.
+func TestMedicareHETSPartialCredentialsNamesOnlyMissingOptions(t *testing.T) {
+	m := newMedicareHETSForTest(t)
+
+	resp, err := m.checkEligibilityWithConfig(
+		"testuser",
+		medicareHetsTestValues(),
+		medicareHetsConfig{username: "hetsuser", endpointURL: "http://127.0.0.1:1/hets"},
+		medicareHetsNoNetworkClient(t),
+	)
+	if err == nil {
+		t.Fatal("expected a Go error when credentials are incomplete")
+	}
+	assertMedicareHetsServerFailure(t, resp)
+
+	joined := strings.Join(resp.Messages, " ")
+	for _, option := range []string{"hetsPassword", "hetsSubmitterId", "hetsProviderNpi"} {
+		if !strings.Contains(joined, option) {
+			t.Errorf("failure message does not name the missing option %q: %s", option, joined)
+		}
+	}
+	if strings.Contains(joined, "hetsUsername") {
+		t.Errorf("failure message should not claim hetsUsername is missing: %s", joined)
+	}
+}
+
+// TestMedicareHETSMissingEndpointFails covers the second precondition: even
+// with credentials present, an unconfigured endpoint is a failure, because the
+// plugin must not silently POST to an assumed default CMS address.
+func TestMedicareHETSMissingEndpointFails(t *testing.T) {
+	m := newMedicareHETSForTest(t)
+
+	resp, err := m.checkEligibilityWithConfig(
+		"testuser",
+		medicareHetsTestValues(),
+		medicareHetsTestConfig(), // credentials but no hetsEndpointUrl
+		medicareHetsNoNetworkClient(t),
+	)
+	if err == nil {
+		t.Fatal("expected a Go error when no endpoint is configured")
+	}
+	assertMedicareHetsServerFailure(t, resp)
+
+	joined := strings.Join(resp.Messages, " ")
+	if !strings.Contains(joined, "hetsEndpointUrl") {
+		t.Errorf("failure message should name hetsEndpointUrl, got: %s", joined)
+	}
+	if resp.RawResponse != "" {
+		t.Errorf("RawResponse should be empty when no request was sent, got %q", resp.RawResponse)
+	}
+}
+
+// TestMedicareHETSPostSoapRequestEmptyEndpointFails covers the empty-endpoint
+// guard on the transport helper itself.
+func TestMedicareHETSPostSoapRequestEmptyEndpointFails(t *testing.T) {
+	m := newMedicareHETSForTest(t)
+
+	resp, err := m.postSoapRequest("   ", []byte("<envelope/>"), medicareHetsNoNetworkClient(t))
+	if err == nil {
+		t.Fatal("expected a Go error for an empty endpoint")
+	}
+	assertMedicareHetsServerFailure(t, resp)
+	if !strings.Contains(strings.Join(resp.Messages, " "), "hetsEndpointUrl") {
+		t.Errorf("failure message should name hetsEndpointUrl, got: %v", resp.Messages)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Credentials present, endpoint unreachable -> failure, not success
+// ---------------------------------------------------------------------------
+
+// TestMedicareHETSEndpointUnreachableFails points the plugin at a closed port
+// on the local loopback interface. The connection is refused by the local
+// stack, so no CMS/HETS traffic is generated, and the plugin must report a
+// failure rather than an eligibility result.
+func TestMedicareHETSEndpointUnreachableFails(t *testing.T) {
+	m := newMedicareHETSForTest(t)
+
+	port := freeLocalPort(t)
+	endpoint := fmt.Sprintf("http://127.0.0.1:%d/hets", port)
+
+	cfg := medicareHetsTestConfig()
+	cfg.endpointURL = endpoint
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := m.checkEligibilityWithConfig("testuser", medicareHetsTestValues(), cfg, client)
+
+	if err == nil {
+		t.Fatal("expected a Go error when the HETS endpoint is unreachable")
+	}
+	assertMedicareHetsServerFailure(t, resp)
+
+	joined := strings.Join(resp.Messages, " ")
+	if !strings.Contains(joined, endpoint) {
+		t.Errorf("failure message should name the unreachable endpoint %s, got: %s", endpoint, joined)
+	}
+	if resp.RawResponse != "" {
+		t.Errorf("RawResponse should be empty when no response was received, got %q", resp.RawResponse)
+	}
+	if strings.Contains(joined, "Active Coverage") || strings.Contains(joined, "MEDICARE PART") {
+		t.Errorf("unreachable endpoint must not produce coverage data: %s", joined)
+	}
+}
+
+// TestMedicareHETSEndpointHTTPErrorFails covers an endpoint that answers with
+// an HTTP error: still a failure, and specifically not a success.
+func TestMedicareHETSEndpointHTTPErrorFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "gateway unavailable", http.StatusBadGateway)
+	}))
+	defer srv.Close()
+
+	m := newMedicareHETSForTest(t)
+	cfg := medicareHetsTestConfig()
+	cfg.endpointURL = srv.URL
+
+	resp, err := m.checkEligibilityWithConfig("testuser", medicareHetsTestValues(), cfg, srv.Client())
+	if err == nil {
+		t.Fatal("expected a Go error for an HTTP 502 response")
+	}
+	assertMedicareHetsServerFailure(t, resp)
+	if !strings.Contains(strings.Join(resp.Messages, " "), "502") {
+		t.Errorf("failure message should name the HTTP status, got: %v", resp.Messages)
+	}
+}
+
+// TestMedicareHETSEndpointNon271BodyFails covers an endpoint that answers 200
+// with something that is not a 271: the plugin must not report success, and
+// must not fabricate coverage data.
+func TestMedicareHETSEndpointNon271BodyFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/xml; charset=utf-8")
+		fmt.Fprint(w, `<?xml version="1.0"?><soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body><CORE:RealTimeResponse xmlns:CORE="http://www.caqh.org/SOAP/WSDL/"><PayloadType>X12_271_Response_005010X279A1</PayloadType></CORE:RealTimeResponse></soap:Body></soap:Envelope>`)
+	}))
+	defer srv.Close()
+
+	m := newMedicareHETSForTest(t)
+	cfg := medicareHetsTestConfig()
+	cfg.endpointURL = srv.URL
+
+	resp, err := m.checkEligibilityWithConfig("testuser", medicareHetsTestValues(), cfg, srv.Client())
+	if err == nil {
+		t.Fatal("expected a Go error for a body with no Payload element")
+	}
+	assertMedicareHetsServerFailure(t, resp)
+	if strings.Contains(strings.Join(resp.Messages, " "), "Active Coverage") {
+		t.Errorf("no eligibility data may be reported from an unusable body: %v", resp.Messages)
+	}
+}
+
+// TestMedicareHETSCheckEligibilityNoConfig exercises the public entry point
+// against a real (or absent) database. It requires tUserConfig, so it skips
+// when the model layer has no query handle available.
 func TestMedicareHETSCheckEligibilityNoConfig(t *testing.T) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -138,9 +445,14 @@ func TestMedicareHETSCheckEligibilityNoConfig(t *testing.T) {
 	}()
 
 	checker := newMedicareHETSForTest(t)
-	_, err := checker.CheckEligibility("testuser", map[string]string{}, false, 0)
+	resp, err := checker.CheckEligibility("testuser", map[string]string{}, false, 0)
 	if err == nil {
 		t.Fatal("expected error when no config is set")
+	}
+	if resp != nil {
+		// If the model layer is available and returns an empty config, the
+		// failure must still be explicit rather than a nil/garbage response.
+		assertMedicareHetsServerFailure(t, resp)
 	}
 	t.Logf("expected error (no config): %v", err)
 }
@@ -434,14 +746,14 @@ func TestMedicareHETSBuildSoapEnvelopeSpecialChars(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// parseSoapResponse
+// parseSoapResponse (the only path that may report success, and only from a
+// 271 the endpoint actually returned)
 // ---------------------------------------------------------------------------
 
 func TestMedicareHETSParseSoapResponseActiveCoverage(t *testing.T) {
 	m := newMedicareHETSForTest(t)
 
-	x12271 := m.buildCannedX12271()
-	b64Response := buildSoapResponseEnvelope(x12271)
+	b64Response := buildSoapResponseEnvelope(medicareHetsTestX12271ActiveCoverage())
 
 	resp, err := m.parseSoapResponse(b64Response)
 	if err != nil {

@@ -3,6 +3,7 @@ package eligibility
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -119,53 +120,297 @@ func newGatewayEDIForTest() (*GatewayEDIEligibility, error) {
 	return g, nil
 }
 
-// TestGatewayEDIBuildSoapEnvelope verifies that buildSoapEnvelope produces
-// valid SOAP XML with the given values.
-func TestGatewayEDIBuildSoapEnvelope(t *testing.T) {
+// ---------------------------------------------------------------------------
+// Request-contract tests: the WSDL's DoInquiry envelope (no DB, no live call)
+// ---------------------------------------------------------------------------
+
+// gatewayEdiTestRequestValues is a complete eligibility request in the
+// vocabulary of org.remitt.prototype.EligibilityParameter (the keys the values
+// map uses): every parameter the Java 0.5.x GatewayEDIEligibility maps onto a
+// GatewayEDI MyNameValue, plus "serviceDate", which is a canonical eligibility
+// parameter the Java plugin never sends.
+var gatewayEdiTestRequestValues = map[string]string{
+	"npi":                   "1234567893",
+	"insuranceId":           "MEMBER-0001",
+	"insuredLastName":       "Doe & Sons", // must be XML-escaped in the body
+	"insuredFirstName":      "Jane",
+	"insuredDateOfBirth":    "1970-01-02",
+	"insuredGender":         "F",
+	"insuredState":          "MA",
+	"insuredSsn":            "000-00-0000",
+	"dependentLastName":     "Doe",
+	"dependentFirstName":    "Junior",
+	"dependentDateOfBirth":  "2015-01-01",
+	"dependentGender":       "M",
+	"dependentRelationship": "01",
+	"serviceType":           "30",
+	"cardIssueDate":         "2020-01-01",
+	"groupId":               "GRP-9",
+}
+
+// gatewayEdiTestExpectedPairs is the ordered (Name, Value) sequence the DoInquiry
+// body must carry for gatewayEdiTestRequestValues: the GatewayEDI parameter
+// names of GatewayEDIEligibility.java:88-137, in that order, each carrying the
+// caller's value.
+var gatewayEdiTestExpectedPairs = [][2]string{
+	{"NPI", "1234567893"},
+	{"InsuranceNum", "MEMBER-0001"},
+	{"InsuredLastName", "Doe & Sons"},
+	{"InsuredFirstName", "Jane"},
+	{"InsuredDob", "1970-01-02"},
+	{"InsuredGender", "F"},
+	{"InsuredState", "MA"},
+	{"InsuredSsn", "000-00-0000"},
+	{"DependentLastName", "Doe"},
+	{"DependentFirstName", "Junior"},
+	{"DependentDob", "2015-01-01"},
+	{"DependentGender", "M"},
+	{"DependentRelationshipCode", "01"},
+	{"ServiceTypeCode", "30"},
+	{"CardIssueDate", "2020-01-01"},
+	{"GroupNumber", "GRP-9"},
+}
+
+// gatewayEdiEnvelopeNode is a prefix-independent, namespace-aware view of the
+// request document: XMLName.Space resolves the namespace URI regardless of the
+// prefix the writer chose.
+type gatewayEdiEnvelopeNode struct {
+	XMLName  xml.Name
+	Text     string                   `xml:",chardata"`
+	Children []gatewayEdiEnvelopeNode `xml:",any"`
+}
+
+// child returns the first direct child element with the given local name.
+func (n *gatewayEdiEnvelopeNode) child(local string) *gatewayEdiEnvelopeNode {
+	for i := range n.Children {
+		if n.Children[i].XMLName.Local == local {
+			return &n.Children[i]
+		}
+	}
+	return nil
+}
+
+// text returns the element's character data, trimmed.
+func (n *gatewayEdiEnvelopeNode) text() string {
+	return strings.TrimSpace(n.Text)
+}
+
+// nameValuePairs reads the MyNameValue pairs of a Parameters element.
+func (n *gatewayEdiEnvelopeNode) nameValuePairs(t *testing.T) [][2]string {
+	t.Helper()
+
+	var pairs [][2]string
+	for i := range n.Children {
+		item := &n.Children[i]
+		if item.XMLName.Local != gatewayEdiInquiryMyNameValueElement {
+			t.Errorf("Parameters child %q; want %q", item.XMLName.Local, gatewayEdiInquiryMyNameValueElement)
+			continue
+		}
+		if item.XMLName.Space != gatewayEdiWebServicesNamespace {
+			t.Errorf("MyNameValue namespace = %q; want %q", item.XMLName.Space, gatewayEdiWebServicesNamespace)
+		}
+		name, value := item.child(gatewayEdiInquiryNameElement), item.child(gatewayEdiInquiryValueElement)
+		if name == nil || value == nil {
+			t.Errorf("MyNameValue is missing its %s/%s children: %+v",
+				gatewayEdiInquiryNameElement, gatewayEdiInquiryValueElement, item)
+			continue
+		}
+		pairs = append(pairs, [2]string{name.text(), value.text()})
+	}
+	return pairs
+}
+
+// gatewayEdiParseRequest parses a request document and returns its root node.
+func gatewayEdiParseRequest(t *testing.T, envelope []byte) *gatewayEdiEnvelopeNode {
+	t.Helper()
+
+	var doc gatewayEdiEnvelopeNode
+	if err := xml.Unmarshal(envelope, &doc); err != nil {
+		t.Fatalf("request document is not valid XML: %v (%s)", err, envelope)
+	}
+	return &doc
+}
+
+// assertGatewayEdiNoPGP fails when a request body carries PGP armor or is not an
+// XML document: the DoInquiry request path must be plain SOAP.
+func assertGatewayEdiNoPGP(t *testing.T, body []byte) {
+	t.Helper()
+
+	for _, marker := range []string{"BEGIN PGP", "END PGP", "-----BEGIN", "PGP MESSAGE"} {
+		if bytes.Contains(body, []byte(marker)) {
+			t.Errorf("request body contains a PGP/armored block (%q); the request must be sent unencrypted", marker)
+		}
+	}
+	if trimmed := bytes.TrimSpace(body); len(trimmed) == 0 || !bytes.HasPrefix(trimmed, []byte("<?xml")) {
+		t.Errorf("request body is not an XML document: %q", body)
+	}
+}
+
+// TestGatewayEDIRequestEnvelope asserts the request document against the vendor
+// WSDL (https://services.gatewayedi.com/eligibility/service.asmx?WSDL): the
+// SOAPAction, the DoInquiry operation element inside the SOAP Body, its
+// GatewayEDI.WebServices namespace, the Inquiry/Parameters/MyNameValue shape,
+// ResponseDataType=Xml, and no PGP anywhere in the body.
+func TestGatewayEDIRequestEnvelope(t *testing.T) {
 	g, err := newGatewayEDIForTest()
 	if err != nil {
 		t.Fatalf("failed to get GatewayEDIEligibility: %v", err)
 	}
 
-	values := map[string]string{
-		"fieldA": "value1",
-		"fieldB": "value2",
-	}
+	t.Run("soapaction_from_wsdl", func(t *testing.T) {
+		// <soap:operation soapAction="GatewayEDI.WebServices/DoInquiry" style="document"/>
+		if gatewayEdiSoapAction != "GatewayEDI.WebServices/DoInquiry" {
+			t.Errorf("gatewayEdiSoapAction = %q; want %q", gatewayEdiSoapAction, "GatewayEDI.WebServices/DoInquiry")
+		}
+	})
 
-	envelope, err := g.buildSoapEnvelope(values)
+	envelope, err := g.buildSoapEnvelope(gatewayEdiTestRequestValues)
 	if err != nil {
 		t.Fatalf("buildSoapEnvelope() error = %v", err)
 	}
 
-	// Verify it's valid XML.
-	var v interface{}
-	if err := xml.Unmarshal(envelope, &v); err != nil {
-		t.Fatalf("buildSoapEnvelope() produced invalid XML: %v", err)
-	}
+	doc := gatewayEdiParseRequest(t, envelope)
 
-	s := string(envelope)
-
-	// Verify SOAP envelope structure.
-	if !strings.Contains(s, "xmlns:soapenv=") {
-		t.Error("SOAP envelope missing soapenv namespace declaration")
-	}
-	if !strings.Contains(s, "soapenv:Envelope") {
-		t.Error("SOAP envelope missing Envelope element")
-	}
-	if !strings.Contains(s, "soapenv:Body") {
-		t.Error("SOAP envelope missing Body element")
-	}
-
-	// Verify values appear in the payload.
-	for _, expectedVal := range values {
-		if !strings.Contains(s, expectedVal) {
-			t.Errorf("SOAP envelope missing expected value: %s", expectedVal)
+	t.Run("envelope_and_operation_element", func(t *testing.T) {
+		if doc.XMLName.Local != "Envelope" || doc.XMLName.Space != gatewayEdiSoapEnvelopeNamespace {
+			t.Fatalf("root element = {%s}%s; want {%s}Envelope", doc.XMLName.Space, doc.XMLName.Local, gatewayEdiSoapEnvelopeNamespace)
 		}
+
+		body := doc.child("Body")
+		if body == nil || body.XMLName.Space != gatewayEdiSoapEnvelopeNamespace {
+			t.Fatalf("SOAP Body element missing or in the wrong namespace: %+v", body)
+		}
+
+		op := body.child(gatewayEdiInquiryOperationElement)
+		if op == nil {
+			t.Fatalf("SOAP Body has no %q operation element: %s", gatewayEdiInquiryOperationElement, envelope)
+		}
+		if op.XMLName.Space != gatewayEdiWebServicesNamespace {
+			t.Errorf("%s namespace = %q; want %q (WSDL targetNamespace)",
+				gatewayEdiInquiryOperationElement, op.XMLName.Space, gatewayEdiWebServicesNamespace)
+		}
+
+		inq := op.child(gatewayEdiInquiryContainerElement)
+		if inq == nil {
+			t.Fatalf("%s has no %q child: %s", gatewayEdiInquiryOperationElement, gatewayEdiInquiryContainerElement, envelope)
+		}
+		if inq.XMLName.Space != gatewayEdiWebServicesNamespace {
+			t.Errorf("%s namespace = %q; want %q", gatewayEdiInquiryContainerElement, inq.XMLName.Space, gatewayEdiWebServicesNamespace)
+		}
+		if params := inq.child(gatewayEdiInquiryParametersElement); params == nil || params.XMLName.Space != gatewayEdiWebServicesNamespace {
+			t.Errorf("%s element missing or in the wrong namespace: %+v", gatewayEdiInquiryParametersElement, params)
+		}
+	})
+
+	t.Run("name_value_pairs_carry_request_values", func(t *testing.T) {
+		op := doc.child("Body").child(gatewayEdiInquiryOperationElement)
+		inq := op.child(gatewayEdiInquiryContainerElement)
+		params := inq.child(gatewayEdiInquiryParametersElement)
+		if params == nil {
+			t.Fatal("no Parameters element in the request body")
+		}
+
+		pairs := params.nameValuePairs(t)
+		if len(pairs) != len(gatewayEdiTestExpectedPairs) {
+			t.Fatalf("%d MyNameValue pairs; want %d: %v", len(pairs), len(gatewayEdiTestExpectedPairs), pairs)
+		}
+		for i, want := range gatewayEdiTestExpectedPairs {
+			if pairs[i][0] != want[0] || pairs[i][1] != want[1] {
+				t.Errorf("pair %d = %q=%q; want %q=%q", i, pairs[i][0], pairs[i][1], want[0], want[1])
+			}
+		}
+		// Every caller-supplied value (bar the canonical serviceDate, which the
+		// Java reference never maps) must reach the body; compare the escaped
+		// form, since values are XML-escaped on the way in.
+		for _, want := range gatewayEdiTestExpectedPairs {
+			var escaped bytes.Buffer
+			_ = xml.EscapeText(&escaped, []byte(want[1]))
+			if !strings.Contains(string(envelope), escaped.String()) {
+				t.Errorf("request body is missing value %q", want[1])
+			}
+		}
+		if strings.Contains(string(envelope), "serviceDate") || strings.Contains(string(envelope), "2026-09-15") {
+			t.Error("request body carries the unmapped serviceDate parameter")
+		}
+	})
+
+	t.Run("response_data_type_is_xml", func(t *testing.T) {
+		op := doc.child("Body").child(gatewayEdiInquiryOperationElement)
+		inq := op.child(gatewayEdiInquiryContainerElement)
+
+		rdt := inq.child(gatewayEdiInquiryResponseDataTypeElement)
+		if rdt == nil {
+			t.Fatalf("no %s element in %s", gatewayEdiInquiryResponseDataTypeElement, gatewayEdiInquiryContainerElement)
+		}
+		if rdt.XMLName.Space != gatewayEdiWebServicesNamespace {
+			t.Errorf("%s namespace = %q; want %q", gatewayEdiInquiryResponseDataTypeElement, rdt.XMLName.Space, gatewayEdiWebServicesNamespace)
+		}
+		if rdt.text() != gatewayEdiResponseDataTypeXml {
+			t.Errorf("%s = %q; want %q", gatewayEdiInquiryResponseDataTypeElement, rdt.text(), gatewayEdiResponseDataTypeXml)
+		}
+		if gatewayEdiResponseDataTypeXml != "Xml" {
+			t.Errorf("gatewayEdiResponseDataTypeXml = %q; want %q (WSResponseDataType enum)", gatewayEdiResponseDataTypeXml, "Xml")
+		}
+	})
+
+	t.Run("values_are_xml_escaped", func(t *testing.T) {
+		s := string(envelope)
+		if strings.Contains(s, "Doe & Sons") {
+			t.Error("the '&' in InsuredLastName was not XML-escaped")
+		}
+		if !strings.Contains(s, "Doe &amp; Sons") {
+			t.Errorf("request body does not carry the escaped InsuredLastName: %s", s)
+		}
+	})
+
+	t.Run("no_pgp_in_request", func(t *testing.T) {
+		assertGatewayEdiNoPGP(t, envelope)
+	})
+}
+
+// TestGatewayEDIRequestEnvelopeOmitsAbsentParameters pins the addNameValue
+// behaviour of the Java reference: a parameter the request carries no value for
+// contributes no MyNameValue element (and the canonical serviceDate parameter,
+// which the Java plugin never maps, is never sent either).
+func TestGatewayEDIRequestEnvelopeOmitsAbsentParameters(t *testing.T) {
+	g, err := newGatewayEDIForTest()
+	if err != nil {
+		t.Fatalf("failed to get GatewayEDIEligibility: %v", err)
+	}
+
+	envelope, err := g.buildSoapEnvelope(map[string]string{
+		"npi":         "1234567893",
+		"serviceDate": "2026-09-15",
+	})
+	if err != nil {
+		t.Fatalf("buildSoapEnvelope() error = %v", err)
+	}
+
+	doc := gatewayEdiParseRequest(t, envelope)
+	op := doc.child("Body").child(gatewayEdiInquiryOperationElement)
+	params := op.child(gatewayEdiInquiryContainerElement).child(gatewayEdiInquiryParametersElement)
+	if params == nil {
+		t.Fatal("no Parameters element in the request body")
+	}
+
+	pairs := params.nameValuePairs(t)
+	if len(pairs) != 1 {
+		t.Fatalf("%d MyNameValue pairs; want exactly 1 (NPI): %v", len(pairs), pairs)
+	}
+	if pairs[0][0] != "NPI" || pairs[0][1] != "1234567893" {
+		t.Errorf("pair 0 = %q=%q; want NPI=1234567893", pairs[0][0], pairs[0][1])
+	}
+
+	// ResponseDataType is minOccurs="1" in the WSDL, so it is present even for
+	// an otherwise empty inquiry.
+	inq := op.child(gatewayEdiInquiryContainerElement)
+	if rdt := inq.child(gatewayEdiInquiryResponseDataTypeElement); rdt == nil || rdt.text() != "Xml" {
+		t.Errorf("%s element = %+v; want Xml", gatewayEdiInquiryResponseDataTypeElement, rdt)
 	}
 }
 
-// TestGatewayEDIBuildSoapEnvelopeEmpty verifies that buildSoapEnvelope
-// works with an empty values map.
+// TestGatewayEDIBuildSoapEnvelopeEmpty verifies that buildSoapEnvelope works
+// with an empty values map: a valid DoInquiry document with no pairs.
 func TestGatewayEDIBuildSoapEnvelopeEmpty(t *testing.T) {
 	g, err := newGatewayEDIForTest()
 	if err != nil {
@@ -177,9 +422,98 @@ func TestGatewayEDIBuildSoapEnvelopeEmpty(t *testing.T) {
 		t.Fatalf("buildSoapEnvelope() with empty values error = %v", err)
 	}
 
-	var v interface{}
-	if err := xml.Unmarshal(envelope, &v); err != nil {
-		t.Fatalf("buildSoapEnvelope() with empty values produced invalid XML: %v", err)
+	doc := gatewayEdiParseRequest(t, envelope)
+	op := doc.child("Body").child(gatewayEdiInquiryOperationElement)
+	if op == nil {
+		t.Fatalf("empty values produced no %s element: %s", gatewayEdiInquiryOperationElement, envelope)
+	}
+	inq := op.child(gatewayEdiInquiryContainerElement)
+	if inq == nil {
+		t.Fatalf("empty values produced no %s element: %s", gatewayEdiInquiryContainerElement, envelope)
+	}
+	if params := inq.child(gatewayEdiInquiryParametersElement); params == nil || len(params.Children) != 0 {
+		t.Errorf("%s element = %+v; want an empty element", gatewayEdiInquiryParametersElement, params)
+	}
+	assertGatewayEdiNoPGP(t, envelope)
+}
+
+// TestGatewayEDIPostedRequestIsPlainSoapWithBasicAuth drives the full DB-free
+// request path (postSoapRequest) with the envelope buildSoapEnvelope produces
+// and asserts what the wire actually carries: the WSDL SOAPAction, the SOAP
+// body document verbatim, an Authorization: Basic header that decodes to the
+// configured GatewayEDI credentials, and no PGP block anywhere.
+func TestGatewayEDIPostedRequestIsPlainSoapWithBasicAuth(t *testing.T) {
+	g, err := newGatewayEDIForTest()
+	if err != nil {
+		t.Fatalf("failed to get GatewayEDIEligibility: %v", err)
+	}
+	if err := g.SetContext(context.Background()); err != nil {
+		t.Fatalf("SetContext: %v", err)
+	}
+
+	envelope, err := g.buildSoapEnvelope(gatewayEdiTestRequestValues)
+	if err != nil {
+		t.Fatalf("buildSoapEnvelope() error = %v", err)
+	}
+
+	srv := newGatewayEdiTestServer(t, "/eligibility", gatewayEdiXMLReply(gatewayEdiTestSuccessBody))
+
+	resp, err := gatewayEdiPost(t, g, srv.URL+"/eligibility", envelope, nil, srv.Client())
+	if err != nil {
+		t.Fatalf("postSoapRequest() error = %v", err)
+	}
+	if resp == nil {
+		t.Fatal("postSoapRequest() returned nil response")
+	}
+	if resp.Status != StatusOK || resp.SuccessCode != SuccessCodeSuccess {
+		t.Errorf("resp = (%q, %q); want (%q, %q) (messages: %s)",
+			resp.Status, resp.SuccessCode, StatusOK, SuccessCodeSuccess, gatewayEdiMessages(resp))
+	}
+
+	if got := srv.requestCount(); got != 1 {
+		t.Fatalf("server received %d requests; want exactly 1", got)
+	}
+
+	posted := srv.receivedBody()
+	if !bytes.Equal(posted, envelope) {
+		t.Errorf("posted body = %q; want the built envelope verbatim", posted)
+	}
+	assertGatewayEdiNoPGP(t, posted)
+	if !bytes.Contains(posted, []byte("<gw:"+gatewayEdiInquiryOperationElement)) {
+		t.Errorf("posted body has no %s operation element: %s", gatewayEdiInquiryOperationElement, posted)
+	}
+
+	// The SOAPAction is the one the WSDL declares for DoInquiry.
+	if got := srv.receivedHeader("SOAPAction"); got != gatewayEdiSoapAction {
+		t.Errorf("SOAPAction = %q; want %q", got, gatewayEdiSoapAction)
+	}
+	if got := srv.receivedHeader("Content-Type"); !strings.HasPrefix(got, "text/xml") {
+		t.Errorf("Content-Type = %q; want text/xml", got)
+	}
+
+	// HTTP Basic auth carrying the configured GatewayEDI credentials.
+	authz := srv.receivedHeader("Authorization")
+	const prefix = "Basic "
+	if !strings.HasPrefix(authz, prefix) {
+		t.Fatalf("Authorization = %q; want a Basic scheme header", authz)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(authz, prefix))
+	if err != nil {
+		t.Fatalf("Authorization value %q is not valid base64: %v", authz, err)
+	}
+	user, pass, found := strings.Cut(string(decoded), ":")
+	if !found {
+		t.Fatalf("decoded Authorization %q is not user:password", decoded)
+	}
+	if user != gatewayEdiTestUsername {
+		t.Errorf("Basic auth username = %q; want the configured %q", user, gatewayEdiTestUsername)
+	}
+	if pass != gatewayEdiTestPassword {
+		t.Errorf("Basic auth password = %q; want the configured GatewayEDI password", pass)
+	}
+	// A request with no credentials must not be silently sent as if it had them.
+	if user == "" || pass == "" {
+		t.Error("Basic auth credentials are empty")
 	}
 }
 
@@ -235,9 +569,27 @@ func TestGatewayEDICheckEligibilityRequiresLiveService(t *testing.T) {
 // SOAP POST tests (no DB required; postSoapRequest takes resolved inputs)
 // ---------------------------------------------------------------------------
 
-// gatewayEdiTestEncryptedPayload stands in for the PGP-encrypted SOAP
-// envelope produced by CheckEligibility.
-var gatewayEdiTestEncryptedPayload = []byte("-----BEGIN PGP MESSAGE-----\n\nencrypted-soap-envelope\n-----END PGP MESSAGE-----\n")
+// gatewayEdiTestPayload stands in for the SOAP request document that
+// CheckEligibility builds for the vendor: a plain (unencrypted) SOAP 1.1
+// DoInquiry envelope.
+var gatewayEdiTestPayload = []byte(`<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:gw="GatewayEDI.WebServices">
+  <soapenv:Header/>
+  <soapenv:Body>
+    <gw:DoInquiry>
+      <gw:Inquiry>
+        <gw:Parameters>
+          <gw:MyNameValue>
+            <gw:Name>NPI</gw:Name>
+            <gw:Value>1234567893</gw:Value>
+          </gw:MyNameValue>
+        </gw:Parameters>
+        <gw:ResponseDataType>Xml</gw:ResponseDataType>
+      </gw:Inquiry>
+    </gw:DoInquiry>
+  </soapenv:Body>
+</soapenv:Envelope>
+`)
 
 // gatewayEdiInquiryResponse builds a GatewayEDI.WebServices doInquiryResponse
 // envelope in the documented shape: the Java 0.5.x Axis stubs declare
@@ -287,6 +639,22 @@ const gatewayEdiTestFaultBody = `<?xml version="1.0" encoding="UTF-8"?>
   </soapenv:Body>
 </soapenv:Envelope>`
 
+// gatewayEdiTestUsername and gatewayEdiTestPassword are the GatewayEDI account
+// credentials the tests configure (the gatewayEdiUsername / gatewayEdiPassword
+// tUserConfig options). The test server asserts every request carries exactly
+// these as HTTP Basic auth.
+const (
+	gatewayEdiTestUsername = "gatewayedi-test-user"
+	gatewayEdiTestPassword = "gatewayedi-test-password"
+)
+
+// gatewayEdiPost calls postSoapRequest with the configured test credentials, so
+// each subtest exercises the same auth path CheckEligibility uses.
+func gatewayEdiPost(t *testing.T, g *GatewayEDIEligibility, uri string, payload, privateKey []byte, client *http.Client) (*EligibilityResponse, error) {
+	t.Helper()
+	return g.postSoapRequest(uri, gatewayEdiTestUsername, gatewayEdiTestPassword, payload, privateKey, client)
+}
+
 // gatewayEdiTestServer is an httptest server that enforces the SOAP request
 // contract and records what it received.
 type gatewayEdiTestServer struct {
@@ -330,8 +698,22 @@ func newGatewayEdiTestServer(t *testing.T, wantPath string, reply func(w http.Re
 		} else if sa != gatewayEdiSoapAction {
 			t.Errorf("SOAPAction = %q; want %q", sa, gatewayEdiSoapAction)
 		}
+		// The GatewayEDI account credentials must travel as HTTP Basic auth,
+		// the way the Java 0.5.x plugin authenticates the Axis stub.
+		user, pass, ok := r.BasicAuth()
+		if !ok {
+			t.Error("request carries no HTTP Basic Authorization header; the gateway requires gatewayEdiUsername/gatewayEdiPassword")
+		} else if user != gatewayEdiTestUsername || pass != gatewayEdiTestPassword {
+			t.Errorf("Basic auth credentials = %q/%q; want the configured GatewayEDI credentials", user, pass)
+		}
 		if len(body) == 0 {
-			t.Error("request body is empty; the encrypted payload was not POSTed")
+			t.Error("request body is empty; the SOAP request document was not POSTed")
+		}
+		// The request path must no longer PGP-encrypt anything.
+		for _, marker := range []string{"BEGIN PGP", "END PGP", "-----BEGIN"} {
+			if bytes.Contains(body, []byte(marker)) {
+				t.Errorf("request body contains a PGP/armored block (%q); the DoInquiry request must be plain SOAP XML", marker)
+			}
 		}
 
 		if reply != nil {
@@ -475,7 +857,7 @@ func TestGatewayEDIPostSoapRequest(t *testing.T) {
 	t.Run("success_plaintext", func(t *testing.T) {
 		srv := newGatewayEdiTestServer(t, "/eligibility", gatewayEdiXMLReply(gatewayEdiTestSuccessBody))
 
-		resp, err := g.postSoapRequest(srv.URL+"/eligibility", gatewayEdiTestEncryptedPayload, nil, srv.Client())
+		resp, err := gatewayEdiPost(t, g, srv.URL+"/eligibility", gatewayEdiTestPayload, nil, srv.Client())
 		if err != nil {
 			t.Fatalf("postSoapRequest() error = %v", err)
 		}
@@ -494,8 +876,8 @@ func TestGatewayEDIPostSoapRequest(t *testing.T) {
 		if got := srv.requestCount(); got != 1 {
 			t.Errorf("server received %d requests; want exactly 1", got)
 		}
-		if got := srv.receivedBody(); !bytes.Equal(got, gatewayEdiTestEncryptedPayload) {
-			t.Errorf("posted body = %q; want the encrypted payload %q", got, gatewayEdiTestEncryptedPayload)
+		if got := srv.receivedBody(); !bytes.Equal(got, gatewayEdiTestPayload) {
+			t.Errorf("posted body = %q; want the SOAP request document %q", got, gatewayEdiTestPayload)
 		}
 		if got := srv.receivedHeader("SOAPAction"); got != gatewayEdiSoapAction {
 			t.Errorf("SOAPAction = %q; want %q", got, gatewayEdiSoapAction)
@@ -523,7 +905,7 @@ func TestGatewayEDIPostSoapRequest(t *testing.T) {
 			_, _ = w.Write(encryptedResponse)
 		})
 
-		resp, err := g.postSoapRequest(srv.URL+"/eligibility", gatewayEdiTestEncryptedPayload, privateKey, srv.Client())
+		resp, err := gatewayEdiPost(t, g, srv.URL+"/eligibility", gatewayEdiTestPayload, privateKey, srv.Client())
 		if err != nil {
 			t.Fatalf("postSoapRequest() error = %v", err)
 		}
@@ -559,7 +941,7 @@ func TestGatewayEDIPostSoapRequest(t *testing.T) {
 			_, _ = w.Write(armored)
 		})
 
-		resp, err := g.postSoapRequest(srv.URL+"/eligibility", gatewayEdiTestEncryptedPayload, privateKey, srv.Client())
+		resp, err := gatewayEdiPost(t, g, srv.URL+"/eligibility", gatewayEdiTestPayload, privateKey, srv.Client())
 		if err != nil {
 			t.Fatalf("postSoapRequest() error = %v", err)
 		}
@@ -581,7 +963,7 @@ func TestGatewayEDIPostSoapRequest(t *testing.T) {
 			_, _ = w.Write(gatewayEdiArmorPGPMessage(t, encryptedResponse))
 		})
 
-		resp, err := g.postSoapRequest(srv.URL+"/eligibility", gatewayEdiTestEncryptedPayload, nil, srv.Client())
+		resp, err := gatewayEdiPost(t, g, srv.URL+"/eligibility", gatewayEdiTestPayload, nil, srv.Client())
 		assertGatewayEdiFailure(t, resp, err)
 		if resp != nil && !strings.Contains(gatewayEdiMessages(resp), "private key") {
 			t.Errorf("message %q does not mention the missing private key", gatewayEdiMessages(resp))
@@ -592,7 +974,7 @@ func TestGatewayEDIPostSoapRequest(t *testing.T) {
 		body := gatewayEdiInquiryResponse("ValidationFailure", "", "Member not eligible on date of service")
 		srv := newGatewayEdiTestServer(t, "/eligibility", gatewayEdiXMLReply(body))
 
-		resp, err := g.postSoapRequest(srv.URL+"/eligibility", gatewayEdiTestEncryptedPayload, nil, srv.Client())
+		resp, err := gatewayEdiPost(t, g, srv.URL+"/eligibility", gatewayEdiTestPayload, nil, srv.Client())
 		if err != nil {
 			t.Fatalf("postSoapRequest() error = %v", err)
 		}
@@ -613,7 +995,7 @@ func TestGatewayEDIPostSoapRequest(t *testing.T) {
 	t.Run("soap_fault", func(t *testing.T) {
 		srv := newGatewayEdiTestServer(t, "/eligibility", gatewayEdiXMLReply(gatewayEdiTestFaultBody))
 
-		resp, err := g.postSoapRequest(srv.URL+"/eligibility", gatewayEdiTestEncryptedPayload, nil, srv.Client())
+		resp, err := gatewayEdiPost(t, g, srv.URL+"/eligibility", gatewayEdiTestPayload, nil, srv.Client())
 		assertGatewayEdiFailure(t, resp, err)
 		if resp != nil && !strings.Contains(gatewayEdiMessages(resp), "Invalid subscriber") {
 			t.Errorf("message %q does not include the SOAP fault detail", gatewayEdiMessages(resp))
@@ -624,7 +1006,7 @@ func TestGatewayEDIPostSoapRequest(t *testing.T) {
 		srv := newGatewayEdiTestServer(t, "/eligibility",
 			gatewayEdiXMLReply("<html><body>GatewayEDI maintenance window</body></html>"))
 
-		resp, err := g.postSoapRequest(srv.URL+"/eligibility", gatewayEdiTestEncryptedPayload, nil, srv.Client())
+		resp, err := gatewayEdiPost(t, g, srv.URL+"/eligibility", gatewayEdiTestPayload, nil, srv.Client())
 		assertGatewayEdiFailure(t, resp, err)
 		if resp != nil && !strings.Contains(gatewayEdiMessages(resp), "unrecognised GatewayEDI response format") {
 			t.Errorf("message %q does not name the unrecognised response format", gatewayEdiMessages(resp))
@@ -634,7 +1016,7 @@ func TestGatewayEDIPostSoapRequest(t *testing.T) {
 	t.Run("not_xml_body", func(t *testing.T) {
 		srv := newGatewayEdiTestServer(t, "/eligibility", gatewayEdiXMLReply("200 OK but not XML at all"))
 
-		resp, err := g.postSoapRequest(srv.URL+"/eligibility", gatewayEdiTestEncryptedPayload, nil, srv.Client())
+		resp, err := gatewayEdiPost(t, g, srv.URL+"/eligibility", gatewayEdiTestPayload, nil, srv.Client())
 		assertGatewayEdiFailure(t, resp, err)
 		if resp != nil && !strings.Contains(gatewayEdiMessages(resp), "not valid XML") {
 			t.Errorf("message %q does not report the invalid XML", gatewayEdiMessages(resp))
@@ -651,7 +1033,7 @@ func TestGatewayEDIPostSoapRequest(t *testing.T) {
 		srv := newGatewayEdiTestServer(t, "/eligibility",
 			gatewayEdiXMLReply("-----BEGIN PGP MESSAGE-----\n\nnot-a-real-pgp-message\n-----END PGP MESSAGE-----\n"))
 
-		resp, err := g.postSoapRequest(srv.URL+"/eligibility", gatewayEdiTestEncryptedPayload, privateKey, srv.Client())
+		resp, err := gatewayEdiPost(t, g, srv.URL+"/eligibility", gatewayEdiTestPayload, privateKey, srv.Client())
 		assertGatewayEdiFailure(t, resp, err)
 		if resp != nil && !strings.Contains(gatewayEdiMessages(resp), "could not be PGP-decrypted") {
 			t.Errorf("message %q does not report the decryption failure", gatewayEdiMessages(resp))
@@ -664,14 +1046,14 @@ func TestGatewayEDIPostSoapRequest(t *testing.T) {
 	t.Run("empty_response_body", func(t *testing.T) {
 		srv := newGatewayEdiTestServer(t, "/eligibility", gatewayEdiXMLReply(""))
 
-		resp, err := g.postSoapRequest(srv.URL+"/eligibility", gatewayEdiTestEncryptedPayload, nil, srv.Client())
+		resp, err := gatewayEdiPost(t, g, srv.URL+"/eligibility", gatewayEdiTestPayload, nil, srv.Client())
 		assertGatewayEdiFailure(t, resp, err)
 	})
 
 	t.Run("non_2xx_response", func(t *testing.T) {
 		srv := newGatewayEdiTestServer(t, "/eligibility", gatewayEdiStatusReply(http.StatusInternalServerError, "internal error"))
 
-		resp, err := g.postSoapRequest(srv.URL+"/eligibility", gatewayEdiTestEncryptedPayload, nil, srv.Client())
+		resp, err := gatewayEdiPost(t, g, srv.URL+"/eligibility", gatewayEdiTestPayload, nil, srv.Client())
 		assertGatewayEdiFailure(t, resp, err)
 		if resp != nil && !strings.Contains(gatewayEdiMessages(resp), "500") {
 			t.Errorf("message %q does not report the HTTP status code", gatewayEdiMessages(resp))
@@ -682,7 +1064,7 @@ func TestGatewayEDIPostSoapRequest(t *testing.T) {
 		srv := newGatewayEdiTestServer(t, "/eligibility", gatewayEdiXMLReply(gatewayEdiTestSuccessBody))
 
 		for _, uri := range []string{"", "   "} {
-			resp, err := g.postSoapRequest(uri, gatewayEdiTestEncryptedPayload, nil, srv.Client())
+			resp, err := gatewayEdiPost(t, g, uri, gatewayEdiTestPayload, nil, srv.Client())
 			if err == nil {
 				t.Errorf("postSoapRequest(%q) error = nil; want an error", uri)
 			}
@@ -698,7 +1080,7 @@ func TestGatewayEDIPostSoapRequest(t *testing.T) {
 		deadURL := dead.URL
 		dead.Close()
 
-		resp, err := g.postSoapRequest(deadURL+"/eligibility", gatewayEdiTestEncryptedPayload, nil, nil)
+		resp, err := gatewayEdiPost(t, g, deadURL+"/eligibility", gatewayEdiTestPayload, nil, nil)
 		assertGatewayEdiFailure(t, resp, err)
 		if err == nil {
 			t.Error("postSoapRequest() error = nil after the endpoint went away; want an error")
@@ -708,7 +1090,7 @@ func TestGatewayEDIPostSoapRequest(t *testing.T) {
 	t.Run("empty_payload_rejected", func(t *testing.T) {
 		srv := newGatewayEdiTestServer(t, "/eligibility", gatewayEdiXMLReply(gatewayEdiTestSuccessBody))
 
-		resp, err := g.postSoapRequest(srv.URL+"/eligibility", nil, nil, srv.Client())
+		resp, err := gatewayEdiPost(t, g, srv.URL+"/eligibility", nil, nil, srv.Client())
 		assertGatewayEdiFailure(t, resp, err)
 		if got := srv.requestCount(); got != 0 {
 			t.Errorf("server received %d requests for an empty payload; want 0", got)
@@ -761,7 +1143,7 @@ func TestGatewayEDISuccessCodeMapping(t *testing.T) {
 			body := gatewayEdiInquiryResponse(tc.elementValue, "", message)
 			srv := newGatewayEdiTestServer(t, "/eligibility", gatewayEdiXMLReply(body))
 
-			resp, err := g.postSoapRequest(srv.URL+"/eligibility", gatewayEdiTestEncryptedPayload, nil, srv.Client())
+			resp, err := gatewayEdiPost(t, g, srv.URL+"/eligibility", gatewayEdiTestPayload, nil, srv.Client())
 			if err != nil {
 				t.Fatalf("postSoapRequest() error = %v", err)
 			}
@@ -817,7 +1199,7 @@ func TestGatewayEDINeverSucceedsWithoutSuccessCode(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := newGatewayEdiTestServer(t, "/eligibility", gatewayEdiXMLReply(tc.body))
 
-			resp, err := g.postSoapRequest(srv.URL+"/eligibility", gatewayEdiTestEncryptedPayload, nil, srv.Client())
+			resp, err := gatewayEdiPost(t, g, srv.URL+"/eligibility", gatewayEdiTestPayload, nil, srv.Client())
 			if err != nil {
 				t.Fatalf("postSoapRequest() error = %v", err)
 			}
@@ -855,7 +1237,7 @@ func TestGatewayEDIRawResponse(t *testing.T) {
 		body := gatewayEdiInquiryResponse("Success", rawPayload, "Active coverage")
 		srv := newGatewayEdiTestServer(t, "/eligibility", gatewayEdiXMLReply(body))
 
-		resp, err := g.postSoapRequest(srv.URL+"/eligibility", gatewayEdiTestEncryptedPayload, nil, srv.Client())
+		resp, err := gatewayEdiPost(t, g, srv.URL+"/eligibility", gatewayEdiTestPayload, nil, srv.Client())
 		if err != nil {
 			t.Fatalf("postSoapRequest() error = %v", err)
 		}
@@ -871,7 +1253,7 @@ func TestGatewayEDIRawResponse(t *testing.T) {
 		body := gatewayEdiInquiryResponse("Success", "", "Active coverage")
 		srv := newGatewayEdiTestServer(t, "/eligibility", gatewayEdiXMLReply(body))
 
-		resp, err := g.postSoapRequest(srv.URL+"/eligibility", gatewayEdiTestEncryptedPayload, nil, srv.Client())
+		resp, err := gatewayEdiPost(t, g, srv.URL+"/eligibility", gatewayEdiTestPayload, nil, srv.Client())
 		if err != nil {
 			t.Fatalf("postSoapRequest() error = %v", err)
 		}
@@ -887,7 +1269,7 @@ func TestGatewayEDIRawResponse(t *testing.T) {
 		body := gatewayEdiInquiryResponse("SomethingElse", "", "unexpected code")
 		srv := newGatewayEdiTestServer(t, "/eligibility", gatewayEdiXMLReply(body))
 
-		resp, err := g.postSoapRequest(srv.URL+"/eligibility", gatewayEdiTestEncryptedPayload, nil, srv.Client())
+		resp, err := gatewayEdiPost(t, g, srv.URL+"/eligibility", gatewayEdiTestPayload, nil, srv.Client())
 		if err != nil {
 			t.Fatalf("postSoapRequest() error = %v", err)
 		}
@@ -917,7 +1299,7 @@ func TestGatewayEDIMessagesFromExtraProcessingInfo(t *testing.T) {
 		body := gatewayEdiInquiryResponse("Success", "", "Active coverage", "Co-pay 20%", "Deductible 500")
 		srv := newGatewayEdiTestServer(t, "/eligibility", gatewayEdiXMLReply(body))
 
-		resp, err := g.postSoapRequest(srv.URL+"/eligibility", gatewayEdiTestEncryptedPayload, nil, srv.Client())
+		resp, err := gatewayEdiPost(t, g, srv.URL+"/eligibility", gatewayEdiTestPayload, nil, srv.Client())
 		if err != nil {
 			t.Fatalf("postSoapRequest() error = %v", err)
 		}
@@ -938,7 +1320,7 @@ func TestGatewayEDIMessagesFromExtraProcessingInfo(t *testing.T) {
 		body := gatewayEdiInquiryResponse("SystemError", "", "Gateway is unavailable")
 		srv := newGatewayEdiTestServer(t, "/eligibility", gatewayEdiXMLReply(body))
 
-		resp, err := g.postSoapRequest(srv.URL+"/eligibility", gatewayEdiTestEncryptedPayload, nil, srv.Client())
+		resp, err := gatewayEdiPost(t, g, srv.URL+"/eligibility", gatewayEdiTestPayload, nil, srv.Client())
 		if err != nil {
 			t.Fatalf("postSoapRequest() error = %v", err)
 		}
