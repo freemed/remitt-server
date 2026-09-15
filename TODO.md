@@ -89,10 +89,12 @@ All 20 endpoints are also reachable through the SOAP 1.1 compatibility layer
       2,048) and produce identical bytes on every run — verified with every engine
       module resolved from the module cache, five consecutive fresh-process runs,
       and confirmed green in CI. `common/xsl_micro_test.go` is 14/14 and
-      `TestXslTransform_Compare` passes 4/4. `xsltproc` is therefore no longer
-      strictly required; retiring it (flip `InternalXslt` to true, drop `libxslt`
-      from the image) is a deployment decision, not an engine gap. See the
-      REMAINING list below for what is still open.
+      `TestXslTransform_Compare` passes 4/4. `internal-xslt` now defaults to
+      **true** (commit `7afeae9`), so the in-process engine is the production
+      default; `xsltproc` is retained in the image as the fallback that
+      `common.XslTransform` uses if the in-process engine errors, and a
+      deployment can still select it with `internal-xslt: false`. Dropping
+      libxslt from the image is the remaining deployment decision.
 - [ ] **`/metrics` requires credentials.** In echo v5 `e.Use(...)` builds one global
       chain, so registering `e.GET("/metrics", ...)` before the BasicAuth group does
       **not** exempt it — measured: unauthenticated `GET /metrics` returns 401 in all

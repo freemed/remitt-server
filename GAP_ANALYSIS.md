@@ -97,9 +97,12 @@ dependency had not been evaluated yet silently resolved to an empty node-set and
 the wrong value was frozen forever. That last one made output non-deterministic
 run to run.
 
-`InternalXslt` still defaults to **false**, so production continues to use the
-`xsltproc` binary; dropping it is now a deployment decision rather than a
-correctness prerequisite.
+`InternalXslt` now defaults to **true**: the in-process engine is the production
+path. `common.XslTransform` is the single dispatcher both call sites use, and it
+falls back to the `xsltproc` binary (still shipped) if the in-process engine
+returns an error — skipped when no binary path is configured, and if both fail the
+error names both. Setting `internal-xslt: false` selects the external engine
+outright.
 
 ### Validation Plugins: 1 of 1 DONE, and it no longer lies
 X12Validator (otto JS engine; scripts in resources/scripts/validation/). Until

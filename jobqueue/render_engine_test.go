@@ -41,10 +41,13 @@ func TestRenderPropagatesTransformError(t *testing.T) {
 	}
 }
 
-// TestRenderUsesTheConfiguredEngine pins that the job pipeline honors
-// internal-xslt instead of hardcoding the external binary. The internal branch
-// used to be commented out here, so flipping the config default would have had
-// no effect on the path that actually renders production jobs.
+// TestRenderUsesTheConfiguredEngine pins that this method honors internal-xslt
+// instead of hardcoding the external binary. The internal branch used to be
+// commented out here, so the config setting did nothing on this path.
+//
+// Note this method is not on the live pipeline path (executeJob renders through
+// the render plugin), which is why the hardcoding went unnoticed; the test keeps
+// the method from being a trap if it is ever wired up or called directly.
 func TestRenderUsesTheConfiguredEngine(t *testing.T) {
 	prev := config.Config
 	t.Cleanup(func() { config.Config = prev })

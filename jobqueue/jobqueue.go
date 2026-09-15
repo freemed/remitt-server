@@ -151,10 +151,16 @@ func (o *JobQueueItem) Render() (out []byte, err error) {
 
 	xslfile := config.Config.Paths.BasePath + string(os.PathSeparator) + "resources" + string(os.PathSeparator) + "xsl" + string(os.PathSeparator) + o.RenderOption + ".xsl"
 
-	// Honor the configured engine (common.XslTransform dispatches, and falls back
-	// to xsltproc if the in-process engine errors). The transform error used to be
-	// discarded here: it was overwritten by the ReadFile error two statements
-	// later, so a failed render returned an empty result with a nil error.
+	// Honor the configured engine: common.XslTransform dispatches to the
+	// in-process engine by default and falls back to xsltproc if that errors.
+	//
+	// NOTE: this method is NOT on the live pipeline path. executeJob renders
+	// through the render plugin (render/xslt.go), which calls the same
+	// dispatcher. This method is kept correct anyway so it is not a trap: it
+	// previously called the external binary unconditionally (the internal branch
+	// was commented out, so the internal-xslt setting did nothing here) and then
+	// overwrote its transform error with the following ReadFile error, returning
+	// an empty payload with a NIL error.
 	if err = common.XslTransform(inxml.Name(), xslfile, outxml.Name(), map[string]string{}); err != nil {
 		log.Printf("Render(): %s", err.Error())
 		outxml.Close()
