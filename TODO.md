@@ -96,23 +96,13 @@ All 20 endpoints are also reachable through the SOAP 1.1 compatibility layer
       so the X12 CRLF terminator degrades to LF), and it indents **inside text
       nodes**, which `FixedFormXml` consumes verbatim
       (`translation/fixedformxml.go:109`).
-- [ ] **`task` scheduler cannot parse the schedules the database contains.** The
-      `jobSchedule` column holds cron4j patterns (`migrations/001_legacy.up.sql:352`
-      seeds `'* * * * *'` and `'*/30 * * * *'`; the Java parsed the same column with
-      `it.sauronsoftware.cron4j.SchedulingPattern`, `MasterControl.java:29,213`),
-      but `task/scheduler.go` only calls `time.ParseDuration`, so every seeded job is
-      rejected with `time: invalid duration` and never runs. The job-2 seed row also
-      carries the legacy typo `EligibiltyTask`, which matches no class. Also pinned:
-      `Stop()` panics on a second call, a stop request is dropped while the runner is
-      busy (so a busy task runs forever), `runTask` panics on a non-positive interval
-      from inside a goroutine (kills the process), and `s.ticker` is read/written
-      without synchronisation.
-- [ ] **Prometheus metrics record the wrong status.** Errors returned by handlers and
-      all 404/405s are recorded as `status="200"` (Prometheus is registered innermost,
-      so `HTTPErrorHandler` runs after it), a gzip-wrapped writer fails the
-      `*echo.Response` assertion and hardcodes 200 (every browser client), panicking
-      requests appear in neither counter nor histogram, and 401s rejected by BasicAuth
-      are not counted at all.
+- [ ] **`/metrics` requires credentials.** In echo v5 `e.Use(...)` builds one global
+      chain, so registering `e.GET("/metrics", ...)` before the BasicAuth group does
+      **not** exempt it — measured: unauthenticated `GET /metrics` returns 401 in all
+      three registration orders. If scrapers are expected to reach it anonymously, this
+      needs a `BasicAuthConfig` Skipper; that is an auth decision, so it is left to the
+      owner. (Prometheus is now registered outermost, so rejected scrapes at least show
+      up as `status="401"` instead of being invisible.)
 - [ ] **Validator: spec-script selection deferred.** The port hardcodes
       `004010X098A1.js` (837P) and applies it to 835/271 payloads too, where the Java
       derives the script from GS08 (`X12Validator.java:56,139-145`). Needs a decision
@@ -149,4 +139,19 @@ All 20 endpoints are also reachable through the SOAP 1.1 compatibility layer
       Java plugin, and fails closed.
 - [X] **`eligibility` was missing 4 of 5 status values and 6 of 8 success codes**,
       so no plugin could report what real payers return.
+- [X] **The task scheduler could not parse the schedules its own database stores.**
+      `jobSchedule` holds cron4j patterns and the Go scheduler only understood Go
+      durations, so both seeded jobs were rejected and never ran on any install. Cron
+      patterns are now parsed (with the next fire time computed from the pattern) and
+      migration 002 corrects the seeded `EligibiltyTask` class typo in data. Also
+      fixed: `Stop()` panicking on a second call, a stop request dropped while the
+      runner was busy (busy tasks ran forever), a non-positive interval panicking
+      inside a goroutine (killed the process), an unsynchronised `s.ticker`,
+      stopped tasks being resurrected by `refreshJobs`, and nil-DB panics.
+- [X] **Prometheus recorded the wrong status and missed whole classes of traffic.**
+      Handler-returned errors and all 404/405s were recorded as `status="200"`, a
+      gzip-wrapped writer (every browser) forced 200, panics were recorded nowhere,
+      and BasicAuth 401s were not counted at all. Prometheus now registers outermost,
+      reads status through `echo.UnwrapResponse`, and records post-chain statuses via
+      `resp.Before` plus a deferred recover; metric names and labels are unchanged.
 
