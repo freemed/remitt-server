@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/freemed/remitt-server/common"
 	"github.com/freemed/remitt-server/internal/dbgen"
 	"github.com/freemed/remitt-server/model"
 	"github.com/freemed/remitt-server/model/user"
@@ -48,6 +49,25 @@ func (s *StoreFilePdf) Transport(filename string, data any) error {
 		return fmt.Errorf("storefilepdf: database is not initialised")
 	}
 
+	// The two ids tFileStore requires (both are NOT NULL foreign keys and no
+	// parent row can have id 0): the payload this job is processing and the
+	// stage row it was journaled under. StoreFilePdf.java:87 passes its jobId to
+	// DbFileStore.putFile, which resolves the payload through it - the Java
+	// plugin interface carried the job identity, and the Go Transporter
+	// interface does not, so it arrives in the context
+	// (common/jobcontext.go). A job without an identity fails here, with the
+	// reason, instead of being rejected by the foreign key with error 1452.
+	job, ok := common.JobIdentityFromContext(s.ctx)
+	if !ok {
+		return fmt.Errorf("storefilepdf: no job identity in context: tFileStore.payloadId references tPayload(id) and tFileStore.processorId references tProcessor(id), so the job's payload and processor ids must be attached with common.NewJobContext")
+	}
+	if job.PayloadID == 0 {
+		return fmt.Errorf("storefilepdf: job identity carries no payload id: tFileStore.payloadId references tPayload(id) and no payload row can have id 0")
+	}
+	if job.ProcessorID == 0 {
+		return fmt.Errorf("storefilepdf: job identity carries no processor id: tFileStore.processorId references tProcessor(id) and no processor row can have id 0")
+	}
+
 	params := dbgen.InsertFileStoreParams{
 		User:     um.Username,
 		Stamp:    time.Now(),
@@ -59,13 +79,19 @@ func (s *StoreFilePdf) Transport(filename string, data any) error {
 		// jobqueue.go:351-364), so the plugin enforces the same guarantee on
 		// the caller's name instead of trusting it.
 		Filename:    s.storedFilename(filename),
-		PayloadID:   0,
-		ProcessorID: 0,
+		PayloadID:   job.PayloadID,
+		ProcessorID: job.ProcessorID,
 		Content:     sql.NullString{String: string(payload), Valid: true},
 		Contentsize: int64(len(payload)),
 	}
-	_, err := model.Queries.InsertFileStore(context.Background(), params)
-	return err
+	if _, err := model.Queries.InsertFileStore(context.Background(), params); err != nil {
+		// The identity is included in the error: a rejected insert (the
+		// foreign key, or a duplicate (user, category, filename)) is otherwise
+		// impossible to diagnose from the worker's log.
+		return fmt.Errorf("storefilepdf: insert tFileStore (user=%s category=%s filename=%s payloadId=%d processorId=%d): %w",
+			um.Username, params.Category, params.Filename, job.PayloadID, job.ProcessorID, err)
+	}
+	return nil
 }
 
 // fileStoreCategory is the tFileStore category every row from this plugin

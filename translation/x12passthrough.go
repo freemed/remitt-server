@@ -7,6 +7,9 @@ import (
 
 func init() {
 	RegisterTranslator("x12passthrough", func() Translator { return &TranslateX12Passthrough{} })
+	// The Java class is org.remitt.plugin.translation.X12Passthrough; see the
+	// note in x12xml.go and migrations/001_legacy.up.sql:220.
+	registerJavaTranslator("X12Passthrough", func() Translator { return &TranslateX12Passthrough{} })
 }
 
 type TranslateX12Passthrough struct {

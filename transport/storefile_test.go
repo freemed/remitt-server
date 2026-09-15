@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/freemed/remitt-server/common"
 	"github.com/freemed/remitt-server/internal/dbgen"
 	"github.com/freemed/remitt-server/model"
 	"github.com/freemed/remitt-server/model/user"
@@ -168,15 +169,19 @@ func withStubQueries(t *testing.T, db *stubDB, columns []string, rows [][]driver
 }
 
 // userRowColumns matches the SELECT in internal/dbgen/user.sql.go:getUserByName.
+// It has EIGHT columns: tUser has no role column in the migrated schema (roles
+// live in tRole), and the query no longer asks for one - when this list still
+// carried "role" the stub made every user lookup fail with
+// "expected 9 destination arguments in Scan, not 8".
 var userRowColumns = []string{
 	"id", "username", "passhash", "contactemail",
 	"callbackserviceuri", "callbackservicewsdluri",
-	"callbackusername", "callbackpassword", "role",
+	"callbackusername", "callbackpassword",
 }
 
 func userRow(id int64, username, email string) []driver.Value {
 	return []driver.Value{
-		id, username, "$2a$10$notarealhash", email, nil, nil, nil, nil, "Administrator",
+		id, username, "$2a$10$notarealhash", email, nil, nil, nil, nil,
 	}
 }
 
@@ -188,11 +193,26 @@ func ctxWithUser(username string) context.Context {
 	return user.NewContext(context.Background(), &model.UserModel{Username: username, Id: 1})
 }
 
+// ctxWithJobIdentity is the context a job carries: the user (user.FromContext)
+// plus the job's database identity (common.JobIdentityFromContext), which is
+// what a transport that writes to tFileStore needs. jobqueue attaches the user
+// today (jobqueue.go:308,336); the identity is the same mechanism and the same
+// call site - see transport/storefile.go and common/jobcontext.go.
+func ctxWithJobIdentity(username string, payloadID, processorID uint64) context.Context {
+	return common.NewJobContext(ctxWithUser(username), common.JobIdentity{
+		PayloadID:   payloadID,
+		ProcessorID: processorID,
+		// The in-memory queue id is carried for the log/error text only; it is
+		// not a database key and nothing may be written from it.
+		JobID: 42,
+	})
+}
+
 func TestStoreFile_Transport_InsertsPayloadIntoFileStore(t *testing.T) {
 	db := withStubQueries(t, nil, nil, nil)
 
 	s := &StoreFile{}
-	if err := s.SetContext(ctxWithUser("alice")); err != nil {
+	if err := s.SetContext(ctxWithJobIdentity("alice", 7, 3)); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.SetOptions(map[string]any{}); err != nil {
@@ -231,6 +251,17 @@ func TestStoreFile_Transport_InsertsPayloadIntoFileStore(t *testing.T) {
 	if got, want := call.Args[3], driver.Value("1700000000.x12"); got != want {
 		t.Errorf("arg[3] (filename) = %#v; want %#v (passed through unchanged)", got, want)
 	}
+	// arg[4]/arg[5] are the two foreign keys. They are the job identity from
+	// the context (payloadId -> tPayload(id), processorId -> tProcessor(id));
+	// writing 0 there is what error 1452 rejected. (The value is compared as
+	// text because database/sql converts a uint64 parameter to the int64 the
+	// driver protocol carries.)
+	if got := fmt.Sprint(call.Args[4]); got != "7" {
+		t.Errorf("arg[4] (payloadId) = %#v; want 7 (the payload id from common.JobIdentityFromContext, not 0)", call.Args[4])
+	}
+	if got := fmt.Sprint(call.Args[5]); got != "3" {
+		t.Errorf("arg[5] (processorId) = %#v; want 3 (the processor id from common.JobIdentityFromContext, not 0)", call.Args[5])
+	}
 	if got, want := call.Args[6], driver.Value(payload); got != want {
 		t.Errorf("arg[6] (content) = %#v; want the payload %#v", got, want)
 	}
@@ -254,7 +285,7 @@ func TestStoreFile_Transport_AcceptsStringAndBytePayloads(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			db := withStubQueries(t, nil, nil, nil)
 			s := &StoreFile{}
-			if err := s.SetContext(ctxWithUser("bob")); err != nil {
+			if err := s.SetContext(ctxWithJobIdentity("bob", 11, 5)); err != nil {
 				t.Fatal(err)
 			}
 			if err := s.Transport("out.bin", tt.payload); err != nil {
@@ -311,7 +342,7 @@ func TestStoreFile_Transport_SurfacesDatabaseError(t *testing.T) {
 	dbErr := errors.New("db is down")
 	db := withStubQueries(t, &stubDB{execErr: dbErr}, nil, nil)
 	s := &StoreFile{}
-	if err := s.SetContext(ctxWithUser("alice")); err != nil {
+	if err := s.SetContext(ctxWithJobIdentity("alice", 7, 3)); err != nil {
 		t.Fatal(err)
 	}
 	err := s.Transport("out.bin", "payload")
@@ -321,8 +352,70 @@ func TestStoreFile_Transport_SurfacesDatabaseError(t *testing.T) {
 	if !errors.Is(err, dbErr) {
 		t.Errorf("Transport() = %v; want it to wrap %v", err, dbErr)
 	}
+	// A rejected insert is otherwise undiagnosable from a worker log: the
+	// error must name the row's identity.
+	for _, want := range []string{"payloadId=7", "processorId=3", "out.bin"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Transport() = %q; want it to name %q", err.Error(), want)
+		}
+	}
 	if got := len(db.execCalls()); got != 1 {
 		t.Errorf("recorded %d ExecContext calls; want 1 attempt", got)
+	}
+}
+
+// TestStoreFile_Transport_RequiresJobIdentityInContext pins the fix for the
+// defect the live run exposed: tFileStore.payloadId references tPayload(id) and
+// tFileStore.processorId references tProcessor(id) (migrations/001_legacy.up.sql:
+// tFileStore_ibfk_1/_ibfk_2), so the hardcoded 0 the plugin used to write made
+// every job fail with error 1452. A job whose context carries no identity (or an
+// incomplete one) must fail HERE - with the reason, and without touching the
+// database - instead of surfacing a foreign-key error.
+func TestStoreFile_Transport_RequiresJobIdentityInContext(t *testing.T) {
+	tests := []struct {
+		name string
+		ctx  context.Context
+		want string
+	}{
+		{
+			"no identity at all (user only, as jobqueue attaches it today)",
+			ctxWithUser("alice"),
+			"storefile: no job identity in context",
+		},
+		{
+			"payload id missing",
+			ctxWithJobIdentity("alice", 0, 3),
+			"storefile: job identity carries no payload id",
+		},
+		{
+			"processor id missing",
+			ctxWithJobIdentity("alice", 7, 0),
+			"storefile: job identity carries no processor id",
+		},
+		{
+			"no context at all",
+			nil,
+			"storefile: unable to retrieve user from context",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := withStubQueries(t, nil, nil, nil)
+			s := &StoreFile{}
+			if err := s.SetContext(tt.ctx); err != nil {
+				t.Fatal(err)
+			}
+			err := s.Transport("out.bin", "payload")
+			if err == nil {
+				t.Fatalf("Transport() = nil; want %q", tt.want)
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Transport() = %q; want it to report %q", err.Error(), tt.want)
+			}
+			if got := len(db.execCalls()); got != 0 {
+				t.Errorf("recorded %d ExecContext calls with an unusable identity; want 0 - the invalid row must never reach the database", got)
+			}
+		})
 	}
 }
 

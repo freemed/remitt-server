@@ -10,6 +10,11 @@ import (
 
 func init() {
 	RegisterTranslator("x12xml", func() Translator { return &TranslateX12Xml{} })
+	// The Java class is org.remitt.plugin.translation.X12Xml; that FQCN is what
+	// tTranslation.plugin and tPlugins.plugin store
+	// (migrations/001_legacy.up.sql:219,319) and what the UI harness submits
+	// (ui/testHarness.html:85-86).
+	registerJavaTranslator("X12Xml", func() Translator { return &TranslateX12Xml{} })
 }
 
 type TranslateX12Xml struct {

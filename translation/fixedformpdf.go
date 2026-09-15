@@ -20,6 +20,9 @@ import (
 
 func init() {
 	RegisterTranslator("fixedformpdf", func() Translator { return &TranslateFixedFormPDF{} })
+	// The Java class is org.remitt.plugin.translation.FixedFormPdf; see the
+	// note in x12xml.go and migrations/001_legacy.up.sql:217,319.
+	registerJavaTranslator("FixedFormPdf", func() Translator { return &TranslateFixedFormPDF{} })
 }
 
 type TranslateFixedFormPDF struct {

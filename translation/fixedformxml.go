@@ -13,6 +13,9 @@ import (
 
 func init() {
 	RegisterTranslator("fixedformxml", func() Translator { return &TranslateFixedFormXML{} })
+	// The Java class is org.remitt.plugin.translation.FixedFormXml; see the
+	// note in x12xml.go and migrations/001_legacy.up.sql:218,320.
+	registerJavaTranslator("FixedFormXml", func() Translator { return &TranslateFixedFormXML{} })
 }
 
 type TranslateFixedFormXML struct {

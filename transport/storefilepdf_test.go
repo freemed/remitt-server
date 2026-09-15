@@ -23,6 +23,7 @@ import (
 	"context"
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -34,7 +35,7 @@ func TestStoreFilePdf_Transport_InsertsPayloadIntoFileStore(t *testing.T) {
 	db := withStubQueries(t, nil, nil, nil)
 
 	s := &StoreFilePdf{}
-	if err := s.SetContext(ctxWithUser("alice")); err != nil {
+	if err := s.SetContext(ctxWithJobIdentity("alice", 7, 3)); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.SetOptions(map[string]any{}); err != nil {
@@ -82,6 +83,16 @@ func TestStoreFilePdf_Transport_InsertsPayloadIntoFileStore(t *testing.T) {
 	if got := call.Args[3]; !strings.HasSuffix(got.(string), ".pdf") {
 		t.Errorf("arg[3] (filename) = %#v; want a name carrying the plugin's format extension", got)
 	}
+	// arg[4]/arg[5]: the payload and processor ids the job carries
+	// (tFileStore.payloadId -> tPayload(id), processorId -> tProcessor(id)).
+	// Compared as text because database/sql converts a uint64 parameter to the
+	// int64 the driver protocol carries.
+	if got := fmt.Sprint(call.Args[4]); got != "7" {
+		t.Errorf("arg[4] (payloadId) = %#v; want 7 (the payload id from common.JobIdentityFromContext, not 0)", call.Args[4])
+	}
+	if got := fmt.Sprint(call.Args[5]); got != "3" {
+		t.Errorf("arg[5] (processorId) = %#v; want 3 (the processor id from common.JobIdentityFromContext, not 0)", call.Args[5])
+	}
 	if got, want := call.Args[6], driver.Value(string(payload)); got != want {
 		t.Errorf("arg[6] (content) = %#v; want the PDF bytes %#v", got, want)
 	}
@@ -117,7 +128,7 @@ func TestStoreFilePdf_Transport_StoresAPdfFilename(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			db := withStubQueries(t, nil, nil, nil)
 			s := &StoreFilePdf{}
-			if err := s.SetContext(ctxWithUser("alice")); err != nil {
+			if err := s.SetContext(ctxWithJobIdentity("alice", 7, 3)); err != nil {
 				t.Fatal(err)
 			}
 			if err := s.Transport(tt.pass, []byte("%PDF-1.7")); err != nil {
@@ -174,7 +185,7 @@ func TestStoreFilePdf_Transport_SurfacesDatabaseError(t *testing.T) {
 	dbErr := errors.New("db is down")
 	db := withStubQueries(t, &stubDB{execErr: dbErr}, nil, nil)
 	s := &StoreFilePdf{}
-	if err := s.SetContext(ctxWithUser("alice")); err != nil {
+	if err := s.SetContext(ctxWithJobIdentity("alice", 7, 3)); err != nil {
 		t.Fatal(err)
 	}
 	err := s.Transport("out.pdf", "%PDF-1.7")
@@ -184,8 +195,61 @@ func TestStoreFilePdf_Transport_SurfacesDatabaseError(t *testing.T) {
 	if !errors.Is(err, dbErr) {
 		t.Errorf("Transport() = %v; want it to wrap %v", err, dbErr)
 	}
+	for _, want := range []string{"payloadId=7", "processorId=3", "out.pdf"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Transport() = %q; want it to name %q", err.Error(), want)
+		}
+	}
 	if got := len(db.execCalls()); got != 1 {
 		t.Errorf("recorded %d ExecContext calls; want 1 attempt", got)
+	}
+}
+
+// TestStoreFilePdf_Transport_RequiresJobIdentityInContext is the storefilepdf
+// counterpart of TestStoreFile_Transport_RequiresJobIdentityInContext: both
+// plugins write the same tFileStore row, so both must refuse to write the
+// hardcoded 0 that the foreign keys (tFileStore_ibfk_1/_ibfk_2) reject, and say
+// why.
+func TestStoreFilePdf_Transport_RequiresJobIdentityInContext(t *testing.T) {
+	tests := []struct {
+		name string
+		ctx  context.Context
+		want string
+	}{
+		{
+			"no identity at all (user only, as jobqueue attaches it today)",
+			ctxWithUser("alice"),
+			"storefilepdf: no job identity in context",
+		},
+		{
+			"payload id missing",
+			ctxWithJobIdentity("alice", 0, 3),
+			"storefilepdf: job identity carries no payload id",
+		},
+		{
+			"processor id missing",
+			ctxWithJobIdentity("alice", 7, 0),
+			"storefilepdf: job identity carries no processor id",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := withStubQueries(t, nil, nil, nil)
+			s := &StoreFilePdf{}
+			if err := s.SetContext(tt.ctx); err != nil {
+				t.Fatal(err)
+			}
+			err := s.Transport("out.pdf", "%PDF-1.7")
+			if err == nil {
+				t.Fatalf("Transport() = nil; want %q", tt.want)
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Transport() = %q; want it to report %q", err.Error(), tt.want)
+			}
+			if got := len(db.execCalls()); got != 0 {
+				t.Errorf("recorded %d ExecContext calls with an unusable identity; want 0 - the invalid row must never reach the database", got)
+			}
+		})
 	}
 }
 
