@@ -6,7 +6,13 @@ import (
 )
 
 func init() {
+	// The database stores the Java FQCN (tPlugins:229,
+	// org.remitt.plugin.eligibility.DummyEligibility) and the SOAP layer submits
+	// the short name (soap/soap_test.go), so BOTH must resolve - the same defect
+	// class that left the translation registry unable to answer to the values in
+	// tTranslation.
 	RegisterChecker("DummyEligibility", func() EligibilityChecker { return &DummyEligibility{} })
+	RegisterChecker("org.remitt.plugin.eligibility.DummyEligibility", func() EligibilityChecker { return &DummyEligibility{} })
 }
 
 type DummyEligibility struct {
