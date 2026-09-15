@@ -39,10 +39,15 @@ type EligibilityRequest struct {
 }
 
 // EligibilityResponse holds the result of an eligibility check.
+//
+// RawResponse mirrors the Java 0.5.x org.remitt.prototype.EligibilityResponse
+// contract (status, successCode, rawResponse, messages) and is additive: the
+// field is new, and no existing field was renamed, retyped or reordered.
 type EligibilityResponse struct {
 	Status      string   `json:"status"`
 	SuccessCode string   `json:"successCode"`
 	Messages    []string `json:"messages"`
+	RawResponse string   `json:"rawResponse"`
 }
 
 // EligibilityChecker is the interface for eligibility check plugins.
