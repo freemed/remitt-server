@@ -182,7 +182,36 @@ contract, and each flipped test was RED-verified against the reverted code first
    while accepting short junk; `FromContext` reported a typed-nil user as found.
    All fixed.
 
-### ALSO FOUND, NOT YET FIXED: nothing ever enqueues a job, so the pipeline cannot be triggered
+### FIXED 2026-09-15: the pipeline has a trigger (`3af67c7`)
+
+**Blocker 1 is closed.** Both triggers the owner chose, converging on one enqueue
+function: `api.PayloadInsert` enqueues the row it just stored, and
+`jobqueue.StartPoller` runs the Java's own query
+(`ControlThread.java:563-567` — payloads that are `valid` with no `tProcessor` row)
+as the safety net, so work inserted by any other path or left
+waiting across a restart is still picked up. The enqueue path builds the item with
+an initialised lock, reserves *and* registers it under `jobQueueLock` (so the two
+triggers cannot double-dispatch), journals the `tProcessor` row that both stops
+re-polling and supplies the `processorId` the `tFileStore` foreign key needs, rolls
+back if journaling fails, and attaches `common.JobIdentity` — the one-liner the
+storefile transports were waiting on.
+
+Verified live, independently of the author's run: a payload POSTed to
+`/api/payload/` was enqueued on insert, dispatched, translated and ended
+`completed`, with a `tProcessor` row (`threadId` set, `tsEnd` set) and a
+`tFileStore` row carrying `payloadId=23`/`processorId=16` whose content md5 matches
+the posted payload byte for byte. Also verified live: the poller picking up a row
+inserted straight into MySQL, work waiting across a restart, the failure path ending
+`failed` with `tsEnd` stamped, and both knobs' negative controls.
+
+**Found while verifying that, and fixed with it:** `timing-iterations.worker-threads`
+had **no default**, so a config that omitted it called `StartDispatcher(0)` — no
+workers at all. The dispatcher still read the queue and then blocked forever waiting
+for a free worker, so every payload stalled silently with nothing logged as an error
+(my own first run reproduced exactly that). It now defaults to 4 and
+`usableWorkerCount()` clamps a non-positive value to 1 with a log line.
+
+### OLD: nothing ever enqueues a job, so the pipeline cannot be triggered
 
 - `jobQueueChannel` (`jobqueue/jobqueue.go:42`) is created and only ever READ
   (`jobqueue.go:266`); `grep -rn jobQueueChannel --include=*.go .` returns exactly
