@@ -125,64 +125,72 @@ All 20 endpoints are also reachable through the SOAP 1.1 compatibility layer
       guards needs a live MySQL server); they are listed in
       `model/models_test.go` under `TestDatabaseBoundAPIRequiresDatabase`.
 
-## FOUND BY THAT COVERAGE (tests pin these; production code NOT yet changed)
+## FOUND BY THAT COVERAGE — 8 of 9 FIXED, 1 AWAITING AN OWNER DECISION
 
-Ordered by how much damage each does in production. Every one is a real code
-path, not a style preference — the tests exercise it and assert current behaviour.
+Every one was a real code path, not a style preference. The suites pinned them as
+current behaviour; the fix commits flipped those assertions to the corrected
+contract, and each flipped test was RED-verified against the reverted code first.
 
-1. **No SFTP transport can ever deliver a file.** `transport/sftp.go:37-41`,
+**STILL OPEN — needs an owner decision, deliberately not made for you:**
+
+1. **No SFTP transport can deliver a file.** `transport/sftp.go:37-41`,
    `transport/gatewayedi.go:66-70`, `transport/claimlogic.go:56-60` build an
    `ssh.ClientConfig` with User/Auth/Timeout but **no `HostKeyCallback`**, so
    `ssh.Dial` always returns `ssh: must specify HostKeyCallback`. Three of the
-   seven transports are therefore dead on arrival, and the ZIP container built by
-   gatewayedi/claimlogic is never uploaded.
-2. **Every job seeded from the legacy DB fails to resolve its transport.**
-   `transport/map.go` keys the registry by short names (`sftp`, `claimlogic`, …)
-   but `migrations/001_legacy.up.sql` and the UI store Java FQCNs
-   (`org.remitt.plugin.transport.SftpTransport`), and `jobqueue.go:307` passes the
-   DB value straight into `InstantiateTransporter`. `ScriptedHttpTransport` is
-   advertised by the seed with no such plugin registered.
-3. **GatewayEDI scooper stores remittances UNDECRYPTED.** `scooper/gatewayedi.go`
-   embeds `SftpScooper` by value, so `SftpScooper.Scoop` calls its own
-   `PostProcess` (Go has no virtual dispatch for embedded structs) and the
-   decrypting override is never reached — Java relies on exactly that override.
-   Separately its decryption is gated on `crypto.IsPGPEncrypted`, which matches
-   only ASCII armor while this codebase's own `EncryptPGP` emits binary.
-4. **`model.NullString` silently voids non-NULL data.** `NewNullStringValue`
-   never sets `Valid`, so `nullStringFromSQL` reports every non-NULL column as
-   unset: plugin `inputformat`/`outputformat` and a user's `contactEmail`,
-   callback username and password all marshal as `null`. `UnmarshalJSON` is also
-   on a VALUE receiver (a silent no-op), and `MarshalJSON` uses `QuoteToASCII`,
-   which emits invalid JSON for control characters and makes `json.Marshal` fail
-   outright for strings MySQL stores happily.
-5. **Registry data races (fatal, not recoverable).** `transport/map.go:21-27` and
-   `scooper/map.go:22` read the registry map without the lock that `Register*`
-   takes; a concurrent run aborts the process with "concurrent map read and map
-   write". `transport/registry_race_probe_test.go` is build-tag gated because the
-   runtime fatal error cannot be caught by a test.
-6. **`client.PayloadInsert` is rejected by this server.** It sends no
-   `Content-Type`, and echo's binder answers 415 — the api tests never caught it
-   because they set the header themselves. `client.Ping` also passes the base URL
-   as a printf FORMAT string (any `%` in the URL breaks it), no method checks
-   `resp.StatusCode` (a 500 body is decoded as a success) and none closes
-   `resp.Body`.
-7. **`script_http.go` can hang or crash a job.** No client timeout (a hung payer
-   blocks the worker forever), the HTTP status is never inspected (a 404 body is
-   returned as a success), a connection failure is indistinguishable from an empty
-   body, and a malformed URL panics through `Script.RunUnsafe` into the job worker.
-8. **`model.NullInt.UnmarshalJSON` ignores the document's own `Valid` field**
-   (`Valid = err == nil`), so `{"Int64":0,"Valid":false}` decodes as a valid zero;
-   `model.NullTime.Scan` never fails (a string date silently clears the field) and
-   `UnmarshalJSON` errors on `null` while accepting short junk; `model/user/user.go`
-   reports a typed-nil user as found.
-9. **`scooper` port parsing is lossy and unvalidated** (`fmt.Sscanf` error
-   discarded: `22xyz`→22, `abc`→0, `-1` passes the guard), and `model.SqlDb` is
-   dereferenced with no nil guard in `scooper/sftp.go:42`,
-   `scooper/gatewayedi.go:33`, `transport/storefile.go:48` and
-   `transport/storefilepdf.go:48` — an uninitialised database panics the worker
-   instead of returning an error. The Java `GatewayEdiSftpScooper` also hardcoded
-   its vendor endpoint; the Go port has no defaults, so a registry-built
-   GatewayEDI scooper is always unconfigured.
+   seven transports are dead on arrival and the ZIP container built by
+   gatewayedi/claimlogic is never uploaded. VERIFIED with a real SSH+SFTP server
+   stood up in-process and the production transports driven against it, with
+   differential controls (raw `ssh.Dial` with `InsecureIgnoreHostKey` succeeds on
+   the same endpoint while the transports' dial fails). Fixing it requires a
+   host-key VERIFICATION POLICY — known_hosts path vs a fingerprint pinning table
+   vs an explicit insecure opt-in — which is the owner's call, not the
+   implementer's. Recommendation on the table: known_hosts from a configurable
+   path, with an explicit opt-in insecure bypass for first contact.
+
+**FIXED 2026-09-15** (commits `acc4f65`, `96a6585`, `9394598`, `235e35a`, `e4406e7`):
+
+2. Every job seeded from the legacy DB failed to resolve its transport: the
+   registries were keyed by short names while `migrations/001_legacy.up.sql` and
+   the UI store Java FQCNs. The six names the seed actually contains
+   (`SftpTransport`, `ScriptedHttpTransport`, `ClaimLogicTransport`,
+   `GatewayEdiTransport`, `StoreFile`, `StoreFilePdf` — note the last two are not
+   suffixed `Transport`) are now registered alongside the short names.
+3. GatewayEDI remittances were stored UNDECRYPTED: the value-embedded
+   `SftpScooper` never dispatched the decrypting `PostProcess` override, and
+   decryption was gated on `IsPGPEncrypted`, which matches ASCII armor only while
+   this codebase's own `EncryptPGP` emits binary. Both fixed; the override is now
+   exercised end-to-end through an SFTP session seam.
+4. `model.NullString` voided non-NULL data (constructor never set `Valid`, so
+   `nullStringFromSQL` reported every non-NULL column as unset; `UnmarshalJSON`
+   was on a value receiver; `MarshalJSON` emitted invalid JSON for control
+   characters). All three fixed; the SQL round trip is asserted.
+5/9. Registry data races in `transport/map.go` and `scooper/map.go` — the lookup
+   read the map without the lock the registrar takes, aborting the process.
+   Locked (and released before the factory call). The scooper port parse error is
+   no longer discarded, and the unguarded `model.SqlDb` dereferences now return
+   errors instead of panicking the worker.
+6. `client.PayloadInsert` sent no `Content-Type` and this server rejects that with
+   415; `Ping` used the base URL as a printf format string; no method checked
+   `resp.StatusCode` (a 500 body decoded as a success) or closed `resp.Body`; the
+   JSON marshal error was discarded; a struct-literal client panicked. All fixed.
+7. `script_http.go` had no client timeout (a hung payer blocked the worker
+   forever), never inspected the status (a 404 body was a success), could not
+   distinguish a connection failure from an empty body, and panicked on a
+   malformed URL. All fixed.
+8. `NullInt64.UnmarshalJSON` ignored the document's own `Valid` field; `NullTime`
+   `Scan` never failed and its `UnmarshalJSON` errored on the JSON literal `null`
+   while accepting short junk; `FromContext` reported a typed-nil user as found.
+   All fixed.
+
+### ALSO FOUND, NOT YET FIXED (client/server surface mismatches)
+
+- `client.PayloadResubmit` calls `GET /api/payload/resubmit/:id`, but
+  `api/payload.go`'s `init()` registers **no resubmit route at all**, so
+  `Api.PayloadResubmit` is unreachable over HTTP and `api/api_test.go` drives it
+  by calling the method directly. The route or the handler needs to move.
+- `client.Ping` calls `GET /api/ping/:text` while the server registers
+  `POST /:text` (`api/api.go:26`) — same verb-mismatch class as the fixed defects,
+  on both sides of the wire.
 
 ## FIXED on 2026-09-15 (this file previously claimed these worked)
 
