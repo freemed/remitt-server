@@ -200,6 +200,22 @@ contract, and each flipped test was RED-verified against the reverted code first
   names, host-key policy and option wiring all correct, no job is ever handed to a
   worker. Driving `executeJob` directly (done for the live-database run) is the
   only way to exercise the chain today.
+- Two things the feeder must get right when it is written, both found on
+  2026-09-15: `JobQueueItem.Fail` used to **self-deadlock** (it held the write lock
+  and called `AppendLog`, which takes the same non-reentrant mutex — fixed, pinned
+  by `TestFailDoesNotDeadlockOnTheJobLock`), and the per-item `lock` is a pointer
+  that **nothing initialises**, so a freshly built item panics on the first
+  `AppendLog`/`Fail`/`Finish`/`Cancel` (pinned by
+  `TestJobQueueItemLockMustBeInitialised`). The feeder must set
+  `lock: new(sync.RWMutex)`.
+- Render and translation do NOT have the same options gap, and Java parity says
+  they should not: the `Renderer` and `Translator` interfaces declare no
+  `SetOptions` at all (`render/interface.go:6-12`, `translation/interface.go:6-16`),
+  and the only Java `getPluginOption` callers are the transport and eligibility
+  plugins — no render or translation plugin ever read per-user plugin config.
+  Render's per-plugin rows in the database are named *choices*
+  (`tPluginOptions`: `4010_837p` → `org.remitt.plugin.render.XsltPlugin`), surfaced
+  through `api/plugins.go:53`, not user configuration.
 
 ### FIXED 2026-09-15: the database bootstrap could not migrate
 
