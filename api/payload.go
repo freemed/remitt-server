@@ -16,6 +16,20 @@ import (
 func init() {
 	common.ApiMap["payload"] = func(g *echo.Group) {
 		g.POST("/", a.PayloadInsert)
+
+		// Registered as GET, and MUTATES state: PayloadResubmit inserts a new
+		// payload row and returns its id. GET is used purely for client
+		// compatibility -- client/client.go:272 (PayloadResubmit) issues
+		// `GET /api/payload/resubmit/<id>`, so GET is the only verb that makes
+		// Api.PayloadResubmit reachable for the shipped client. There is no
+		// Java-era HTTP verb to consult: the original Java server exposes
+		// resubmitPayload only as a SOAP operation
+		// (../remitt/.../server/Service.java:99, adapted at
+		// soap/adapters.go:108), i.e. the Go REST surface is a Go-ism and the
+		// shipped client is the de-facto contract. Note this is an unsafe-method
+		// purge on a safe verb: any intermediary (browser prefetch, crawler,
+		// proxy retry) may trigger a real resubmission.
+		g.GET("/resubmit/:id", a.PayloadResubmit)
 	}
 }
 

@@ -24,6 +24,17 @@ type Api struct {
 
 func init() {
 	common.ApiMap["ping"] = func(g *echo.Group) {
+		// GET is the verb client/client.go:80 (Ping) actually sends
+		// (`GET /api/ping/<text>`, with text "PING") and it compares the JSON
+		// body to that exact string, so the route must answer GET.
+		g.GET("/:text", a.Ping)
+
+		// POST /api/ping/:text is kept: it was the only registered verb and is
+		// an already-published part of this server's HTTP surface, so dropping
+		// it would break any caller outside this repository (the SOAP layer
+		// does not use it -- soap/ adapters dispatch through their own
+		// dispatchTable and never touch an HTTP route). Adding GET is purely
+		// additive; both verbs reach the same handler.
 		g.POST("/:text", a.Ping)
 	}
 }

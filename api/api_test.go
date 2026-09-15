@@ -313,12 +313,12 @@ func TestPayloadInsert_RequiresAuth(t *testing.T) {
 }
 
 // TestPayloadResubmit_RequiresAuth verifies the resubmit endpoint requires
-// authentication.
+// authentication, driving the verb the shipped client uses
+// (client/client.go:272 GET /api/payload/resubmit/:id).
 func TestPayloadResubmit_RequiresAuth(t *testing.T) {
 	e := setupTestServer(func(u, p string) bool { return false })
 
-	req := httptest.NewRequest(http.MethodPost, "/api/payload/resubmit/1", nil)
-	req.Header.Set("Content-Type", "application/json")
+	req := httptest.NewRequest(http.MethodGet, "/api/payload/resubmit/1", nil)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
@@ -327,21 +327,25 @@ func TestPayloadResubmit_RequiresAuth(t *testing.T) {
 	}
 }
 
-// TestPayloadResubmit_BadID tests resubmit with a non-numeric ID.
+// TestPayloadResubmit_BadID tests resubmit with a non-numeric ID. It drives
+// the real router on the client's verb: a 400 can only come from
+// Api.PayloadResubmit's own common.ParamInt call, so it proves the route
+// reached the handler (a missing route answers 404, a wrong verb 405, and
+// the id is parsed before any database access, so no DB is needed).
 func TestPayloadResubmit_BadID(t *testing.T) {
 	e := setupTestServer(func(u, p string) bool { return true })
 
-	req := httptest.NewRequest(http.MethodPost, "/api/payload/resubmit/abc", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/payload/resubmit/abc", nil)
 	req.SetBasicAuth("testuser", "testpass")
-	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
-	// Bad ID path should fail — but the resubmit endpoint uses Query params,
-	// not path params. Let's check what we get — if there's no "id" param,
-	// ParamInt will fail.
-	if rec.Code != http.StatusOK {
-		t.Logf("resubmit with bad path returned %d: %s (expected, no DB)", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 Bad Request from PayloadResubmit for a non-numeric id, got %d: %s",
+			rec.Code, rec.Body.String())
+	}
+	if rec.Code == http.StatusNotFound || rec.Code == http.StatusMethodNotAllowed {
+		t.Errorf("resubmit route is not reachable on GET (client's verb): got %d", rec.Code)
 	}
 }
 
@@ -534,11 +538,14 @@ func TestVersionEndpoint_MethodNotAllowed(t *testing.T) {
 	}
 }
 
+// TestPingEndpoint_MethodNotAllowed verifies a verb the ping route does not
+// answer still gets a 405. GET (the shipped client's verb,
+// client/client.go:80) and POST (retained for compatibility) both answer,
+// so an unsupported verb is used here.
 func TestPingEndpoint_MethodNotAllowed(t *testing.T) {
 	e := setupTestServer(func(u, p string) bool { return true })
 
-	// GET to POST-only endpoint
-	req := httptest.NewRequest(http.MethodGet, "/api/ping/hello", nil)
+	req := httptest.NewRequest(http.MethodPut, "/api/ping/hello", nil)
 	req.SetBasicAuth("testuser", "testpass")
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
