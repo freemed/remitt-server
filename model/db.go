@@ -7,12 +7,12 @@ import (
 	"github.com/freemed/remitt-server/config"
 	"github.com/freemed/remitt-server/internal/dbgen"
 	_ "github.com/go-sql-driver/mysql"
-	"github.com/mattes/migrate"
-	"github.com/mattes/migrate/database/mysql"
+	"github.com/golang-migrate/migrate/v4"
+	"github.com/golang-migrate/migrate/v4/database/mysql"
 	// Required for the "file://" migration source below. Without it migrate
 	// fails with "source driver: unknown driver file (forgotton import?)",
 	// which is why migrations had never been able to run at all.
-	_ "github.com/mattes/migrate/source/file"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
 )
 
 var (

@@ -19,7 +19,11 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v4
       with:
-        go-version: '1.25'
+        # Track the workspace's own go directive instead of a hand-copied
+        # version: the modules require go 1.26, so a pinned '1.25' here built
+        # the tree with a toolchain older than every go.mod declares (and
+        # silently pulled a second toolchain download).
+        go-version-file: go.work
 
     - name: Build
       run: go build -v ./...

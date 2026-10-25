@@ -1,6 +1,8 @@
 module github.com/freemed/remitt-server/common
 
-go 1.25.0
+go 1.26.0
+
+toolchain go1.26.10
 
 replace (
 	//github.com/freemed/gokogiri => ../../gokogiri
@@ -18,8 +20,8 @@ require (
 	github.com/freemed/gokogiri/xml v0.0.0-20260127145523-0d7d36b651ea
 	github.com/freemed/ratago/xslt v0.0.0-20260127145558-2a510afd68fb
 	github.com/freemed/remitt-server/config v0.0.0-20260409181504-5105c68ef4de
-	github.com/labstack/echo/v5 v5.1.1
-	golang.org/x/crypto v0.50.0
+	github.com/labstack/echo/v5 v5.4.2
+	golang.org/x/crypto v0.58.0
 	gopkg.in/gomail.v2 v2.0.0-20160411212932-81ebce5c23df
 )
 
@@ -29,7 +31,8 @@ require (
 	github.com/freemed/gokogiri/xpath v0.0.0-20260127145523-0d7d36b651ea // indirect
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/rogpeppe/go-internal v1.10.0 // indirect
-	golang.org/x/net v0.53.0 // indirect
+	golang.org/x/net v0.61.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
 	gopkg.in/alexcesaro/quotedprintable.v3 v3.0.0-20150716171945-2caba252f4dc // indirect
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
