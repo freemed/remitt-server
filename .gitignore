@@ -9,3 +9,6 @@ ui/node_modules
 ui/yarn.lock
 .hermes/
 remitt-server
+/bin/
+coverage.out
+coverage.html
