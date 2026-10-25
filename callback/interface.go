@@ -8,11 +8,11 @@ import (
 
 // JobResult contains the result of a completed job for callback notification.
 type JobResult struct {
-	JobID       int64  `json:"jobId"`
-	PayloadID   int64  `json:"payloadId"`
-	Status      string `json:"status"`
-	Message     string `json:"message"`
-	OriginalID  string `json:"originalId,omitempty"`
+	JobID      int64  `json:"jobId"`
+	PayloadID  int64  `json:"payloadId"`
+	Status     string `json:"status"`
+	Message    string `json:"message"`
+	OriginalID string `json:"originalId,omitempty"`
 }
 
 // CallbackSender is the interface for notifying originating systems

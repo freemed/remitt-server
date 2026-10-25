@@ -49,10 +49,10 @@ func TestStediGetPluginConfigurationOptions(t *testing.T) {
 	}
 
 	expectedKeys := map[string]bool{
-		"stediApiKey":            true,
-		"stediTradingPartnerId":  true,
-		"stediProviderNpi":       true,
-		"stediProviderTaxId":     true,
+		"stediApiKey":           true,
+		"stediTradingPartnerId": true,
+		"stediProviderNpi":      true,
+		"stediProviderTaxId":    true,
 	}
 	for _, opt := range opts {
 		delete(expectedKeys, opt)

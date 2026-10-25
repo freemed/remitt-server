@@ -36,10 +36,10 @@ func init() {
 
 // stediRequest is the JSON payload sent to the Stedi eligibility API.
 type stediRequest struct {
-	TradingPartnerServiceID string         `json:"tradingPartnerServiceId"`
-	Provider                stediProvider  `json:"provider"`
+	TradingPartnerServiceID string          `json:"tradingPartnerServiceId"`
+	Provider                stediProvider   `json:"provider"`
 	Subscriber              stediSubscriber `json:"subscriber"`
-	ServiceTypeCodes        []string       `json:"serviceTypeCodes"`
+	ServiceTypeCodes        []string        `json:"serviceTypeCodes"`
 }
 
 type stediProvider struct {
@@ -60,8 +60,8 @@ type stediResponse struct {
 }
 
 type stediResponseSubscriber struct {
-	EligibilityStatus    string                    `json:"eligibilityStatus"`
-	BenefitsInformation  []stediBenefitInfo        `json:"benefitsInformation"`
+	EligibilityStatus   string             `json:"eligibilityStatus"`
+	BenefitsInformation []stediBenefitInfo `json:"benefitsInformation"`
 }
 
 type stediBenefitInfo struct {
@@ -73,13 +73,13 @@ type stediBenefitInfo struct {
 // It covers BCBS, Medicare, Medicaid, and all commercial payers through
 // a single API endpoint.
 type StediEligibility struct {
-	apiKey            string
-	tradingPartnerId  string
-	providerNpi       string
-	providerTaxId     string
-	configured        bool
-	ctx               context.Context
-	httpClient        *http.Client
+	apiKey           string
+	tradingPartnerId string
+	providerNpi      string
+	providerTaxId    string
+	configured       bool
+	ctx              context.Context
+	httpClient       *http.Client
 }
 
 // GetPluginName returns the Java-style dotted class name of this plugin.

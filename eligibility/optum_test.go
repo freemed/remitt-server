@@ -50,12 +50,12 @@ func TestOptumEligibilityGetPluginConfigurationOptions(t *testing.T) {
 	}
 
 	expectedKeys := map[string]bool{
-		"optumClientId":          true,
-		"optumClientSecret":      true,
-		"optumBaseUrl":           true,
-		"optumTradingPartnerId":  true,
-		"optumProviderNpi":       true,
-		"optumProviderTaxId":     true,
+		"optumClientId":         true,
+		"optumClientSecret":     true,
+		"optumBaseUrl":          true,
+		"optumTradingPartnerId": true,
+		"optumProviderNpi":      true,
+		"optumProviderTaxId":    true,
 	}
 	for _, opt := range opts {
 		delete(expectedKeys, opt)
@@ -149,12 +149,12 @@ func TestOptumBuildRequestBody(t *testing.T) {
 	o.providerTaxId = "12-3456789"
 
 	values := map[string]string{
-		"memberId":          "M12345678",
-		"firstName":         "JOHN",
-		"lastName":          "DOE",
-		"dateOfBirth":       "1980-01-15",
-		"serviceTypeCodes":  "30",
-		"organizationName":  "Test Medical Group",
+		"memberId":         "M12345678",
+		"firstName":        "JOHN",
+		"lastName":         "DOE",
+		"dateOfBirth":      "1980-01-15",
+		"serviceTypeCodes": "30",
+		"organizationName": "Test Medical Group",
 	}
 
 	req := o.buildRequestBody(values)

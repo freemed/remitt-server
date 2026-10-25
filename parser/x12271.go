@@ -12,19 +12,19 @@ func init() {
 
 // X12271Response represents a parsed X12 271 eligibility response.
 type X12271Response struct {
-	RequestValid bool              `json:"request_valid"`
-	AAAErrors    []string          `json:"aaa_errors,omitempty"`
-	Subscriber   X12271Subscriber  `json:"subscriber"`
+	RequestValid bool               `json:"request_valid"`
+	AAAErrors    []string           `json:"aaa_errors,omitempty"`
+	Subscriber   X12271Subscriber   `json:"subscriber"`
 	Dependents   []X12271Subscriber `json:"dependents,omitempty"`
 }
 
 // X12271Subscriber holds subscriber or dependent information from a 271.
 type X12271Subscriber struct {
-	TraceNumber string         `json:"trace_number"`
-	MemberID    string         `json:"member_id"`
-	FirstName   string         `json:"first_name"`
-	LastName    string         `json:"last_name"`
-	DateOfBirth string         `json:"date_of_birth"`
+	TraceNumber string          `json:"trace_number"`
+	MemberID    string          `json:"member_id"`
+	FirstName   string          `json:"first_name"`
+	LastName    string          `json:"last_name"`
+	DateOfBirth string          `json:"date_of_birth"`
 	Benefits    []X12271Benefit `json:"benefits"`
 }
 
@@ -62,11 +62,11 @@ func (p *X12271Parser) ParseData(data string) (string, error) {
 
 	resp := X12271Response{}
 
-	var currentSub *X12271Subscriber      // current subscriber being built
-	var currentDep *X12271Subscriber       // current dependent being built
-	var currentPerson *X12271Subscriber    // active person receiving EB/DTP/MSG segments
-	var currentHL int                      // current HL level (22=subscriber, 23=dependent)
-	var pendingMessages []string           // MSG segments collected before next EB
+	var currentSub *X12271Subscriber    // current subscriber being built
+	var currentDep *X12271Subscriber    // current dependent being built
+	var currentPerson *X12271Subscriber // active person receiving EB/DTP/MSG segments
+	var currentHL int                   // current HL level (22=subscriber, 23=dependent)
+	var pendingMessages []string        // MSG segments collected before next EB
 
 	for _, seg := range segments {
 		seg = strings.TrimSpace(seg)

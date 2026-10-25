@@ -81,14 +81,14 @@ func init() {
 // eligibility request matching the Optum /medicalnetwork/eligibility/v3
 // schema, and parses the response into an EligibilityResponse.
 type OptumEligibility struct {
-	clientId          string
-	clientSecret      string
-	baseURL           string
-	tradingPartnerId  string
-	providerNpi       string
-	providerTaxId     string
-	configured        bool
-	ctx               context.Context
+	clientId         string
+	clientSecret     string
+	baseURL          string
+	tradingPartnerId string
+	providerNpi      string
+	providerTaxId    string
+	configured       bool
+	ctx              context.Context
 }
 
 // --- EligibilityChecker interface ---
@@ -273,10 +273,10 @@ func (o *OptumEligibility) fetchToken() (string, error) {
 // optumEligibilityRequest mirrors the Optum /medicalnetwork/eligibility/v3
 // JSON schema.
 type optumEligibilityRequest struct {
-	TradingPartnerServiceId string              `json:"tradingPartnerServiceId"`
-	Provider                optumProvider       `json:"provider"`
-	Subscriber              optumSubscriber     `json:"subscriber"`
-	ServiceTypeCodes        []string            `json:"serviceTypeCodes,omitempty"`
+	TradingPartnerServiceId string          `json:"tradingPartnerServiceId"`
+	Provider                optumProvider   `json:"provider"`
+	Subscriber              optumSubscriber `json:"subscriber"`
+	ServiceTypeCodes        []string        `json:"serviceTypeCodes,omitempty"`
 }
 
 type optumProvider struct {
@@ -298,7 +298,7 @@ func (o *OptumEligibility) buildRequestBody(values map[string]string) optumEligi
 	req := optumEligibilityRequest{
 		TradingPartnerServiceId: o.tradingPartnerId,
 		Provider: optumProvider{
-			NPI:  o.providerNpi,
+			NPI:   o.providerNpi,
 			TaxID: o.providerTaxId,
 		},
 		Subscriber: optumSubscriber{

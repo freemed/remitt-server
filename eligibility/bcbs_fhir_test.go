@@ -65,11 +65,11 @@ func TestBCBSFhirEligibility_GetPluginConfigurationOptions(t *testing.T) {
 	}
 
 	expectedKeys := map[string]bool{
-		"bcbsFhirBaseUrl":       false,
-		"bcbsFhirClientId":      false,
-		"bcbsFhirClientSecret":  false,
-		"bcbsFhirInsurerRef":    false,
-		"bcbsFhirProviderRef":   false,
+		"bcbsFhirBaseUrl":      false,
+		"bcbsFhirClientId":     false,
+		"bcbsFhirClientSecret": false,
+		"bcbsFhirInsurerRef":   false,
+		"bcbsFhirProviderRef":  false,
 	}
 	for _, opt := range opts {
 		if _, ok := expectedKeys[opt]; ok {
@@ -120,11 +120,11 @@ func TestBCBSFhirEligibility_BuildFhirRequest(t *testing.T) {
 	b := newBCBSFhirForTest(t)
 
 	values := map[string]string{
-		"patientId":    "abc-123",
-		"providerId":   "def-456",
-		"benefitCode":  "30",
-		"insurerRef":   "Organization/bcbs-tn",
-		"providerRef":  "Practitioner/def-456",
+		"patientId":   "abc-123",
+		"providerId":  "def-456",
+		"benefitCode": "30",
+		"insurerRef":  "Organization/bcbs-tn",
+		"providerRef": "Practitioner/def-456",
 	}
 
 	fhirJSON, err := b.buildFhirRequest(values)

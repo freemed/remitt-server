@@ -309,7 +309,7 @@ func TestTransport_Script(t *testing.T) {
 	tr.SetContext(ctx)
 
 	err = tr.SetOptions(map[string]any{
-		"script": `log("test script transport: data length = " + String(data).length);`,
+		"script":  `log("test script transport: data length = " + String(data).length);`,
 		"timeout": 5,
 	})
 	if err != nil {
@@ -345,7 +345,8 @@ func TestTransport_Script_MissingOptions(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestPipeline_PreRendered_X12Passthrough_ToBytes tests:
-//   PreRenderedPlugin → X12Passthrough → byte output (no transport)
+//
+//	PreRenderedPlugin → X12Passthrough → byte output (no transport)
 func TestPipeline_PreRendered_X12Passthrough_ToBytes(t *testing.T) {
 	rawX12, err := os.ReadFile("../../test/testdata/sample_835.x12")
 	if err != nil {
@@ -384,7 +385,8 @@ func TestPipeline_PreRendered_X12Passthrough_ToBytes(t *testing.T) {
 }
 
 // TestPipeline_X12Xml_X12Xml_Translation tests:
-//   X12Xml structured data → X12Xml translator → X12 EDI text output
+//
+//	X12Xml structured data → X12Xml translator → X12 EDI text output
 func TestPipeline_X12Xml_ToEDI(t *testing.T) {
 	data, err := os.ReadFile("../../test/testdata/x12_intermediate.xml")
 	if err != nil {
@@ -426,7 +428,8 @@ func TestPipeline_X12Xml_ToEDI(t *testing.T) {
 }
 
 // TestPipeline_FixedFormXML_ToText tests:
-//   FixedFormXml structured data → FixedFormXML translator → fixed-width text
+//
+//	FixedFormXml structured data → FixedFormXML translator → fixed-width text
 func TestPipeline_FixedFormXML_ToText(t *testing.T) {
 	data, err := os.ReadFile("../../test/testdata/fixedform_simple.xml")
 	if err != nil {
@@ -467,7 +470,8 @@ func TestPipeline_FixedFormXML_ToText(t *testing.T) {
 }
 
 // TestPipeline_FixedFormXML_ToPDF tests:
-//   FixedFormXml structured data → FixedFormPDF translator → PDF output
+//
+//	FixedFormXml structured data → FixedFormPDF translator → PDF output
 func TestPipeline_FixedFormXML_ToPDF(t *testing.T) {
 	data, err := os.ReadFile("../../test/testdata/fixedform_simple.xml")
 	if err != nil {
@@ -505,7 +509,8 @@ func TestPipeline_FixedFormXML_ToPDF(t *testing.T) {
 }
 
 // TestPipeline_X12Xml_ResolvedTranslation verifies the resolver chain:
-//   x12xml → resolve to "x12xml" translator → verify it handles the data
+//
+//	x12xml → resolve to "x12xml" translator → verify it handles the data
 func TestPipeline_X12Xml_ResolvedTranslation(t *testing.T) {
 	// Resolve the translator
 	name, err := translation.ResolveTranslator("x12xml", "x12")

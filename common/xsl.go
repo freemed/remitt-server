@@ -29,7 +29,7 @@ func readXMLFile(path string) (*xml.XmlDocument, error) {
 	}
 	// Strip leading comment blocks
 	for bytes.HasPrefix(data, []byte("<!--")) {
-		if idx := bytes.Index(data, []byte("-->") ); idx >= 0 {
+		if idx := bytes.Index(data, []byte("-->")); idx >= 0 {
 			data = bytes.TrimSpace(data[idx+3:])
 		} else {
 			break

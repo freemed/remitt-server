@@ -43,12 +43,12 @@ const (
 	liveXslt        = "org.remitt.plugin.render.XsltPlugin"
 	livePreRendered = "org.remitt.plugin.render.PreRenderedPlugin"
 
-	liveStoreFile        = "org.remitt.plugin.transport.StoreFile"
-	liveStoreFilePdf     = "org.remitt.plugin.transport.StoreFilePdf"
-	liveSftp             = "org.remitt.plugin.transport.SftpTransport"
-	liveScriptedHttp     = "org.remitt.plugin.transport.ScriptedHttpTransport"
-	liveGatewayEdi       = "org.remitt.plugin.transport.GatewayEdiTransport"
-	liveNoSuchTransport  = "org.remitt.plugin.transport.NoSuchTransport"
+	liveStoreFile       = "org.remitt.plugin.transport.StoreFile"
+	liveStoreFilePdf    = "org.remitt.plugin.transport.StoreFilePdf"
+	liveSftp            = "org.remitt.plugin.transport.SftpTransport"
+	liveScriptedHttp    = "org.remitt.plugin.transport.ScriptedHttpTransport"
+	liveGatewayEdi      = "org.remitt.plugin.transport.GatewayEdiTransport"
+	liveNoSuchTransport = "org.remitt.plugin.transport.NoSuchTransport"
 )
 
 // goTransportInputFormat is the format the Go transport registry declares for
@@ -207,10 +207,10 @@ func TestLive_TranslationResolution(t *testing.T) {
 			wantPlugin:      "org.remitt.plugin.translation.X12Xml", wantGoPlugin: "org.remitt.plugin.translation.X12Xml", wantSource: SourceDatabase,
 		},
 		{
-			name: "4010_837p / scripted http ClaimLogic (the Java unit test's case)",
+			name:         "4010_837p / scripted http ClaimLogic (the Java unit test's case)",
 			renderPlugin: liveXslt, renderOption: "4010_837p",
 			transportPlugin: liveScriptedHttp, transportOption: "ClaimLogic",
-			wantPlugin:      "org.remitt.plugin.translation.X12Xml", wantGoPlugin: "org.remitt.plugin.translation.X12Xml", wantSource: SourceDatabase,
+			wantPlugin: "org.remitt.plugin.translation.X12Xml", wantGoPlugin: "org.remitt.plugin.translation.X12Xml", wantSource: SourceDatabase,
 		},
 		{
 			name: "4010_837p / gatewayedi", renderPlugin: liveXslt, renderOption: "4010_837p",
@@ -222,19 +222,19 @@ func TestLive_TranslationResolution(t *testing.T) {
 			// database names nothing; the shipped statement.xsl.xml declares the
 			// stylesheet's own output as fixedformxml, which the Go registry
 			// resolves to the fixed-form translator.
-			name: "statement / storefile (the database names no translator)",
+			name:         "statement / storefile (the database names no translator)",
 			renderPlugin: liveXslt, renderOption: "statement",
 			transportPlugin: liveStoreFile,
 			wantPlugin:      "", wantGoPlugin: "fixedformxml", wantSource: SourceGoRegistry,
 		},
 		{
-			name: "statement / storefilepdf (the database names no translator)",
+			name:         "statement / storefilepdf (the database names no translator)",
 			renderPlugin: liveXslt, renderOption: "statement",
 			transportPlugin: liveStoreFilePdf,
 			wantPlugin:      "", wantGoPlugin: "fixedformpdf", wantSource: SourceGoRegistry,
 		},
 		{
-			name: "statement / sftp (the database names no translator)",
+			name:         "statement / sftp (the database names no translator)",
 			renderPlugin: liveXslt, renderOption: "statement",
 			transportPlugin: liveSftp,
 			wantPlugin:      "", wantGoPlugin: "fixedformxml", wantSource: SourceGoRegistry,
@@ -263,7 +263,7 @@ func TestLive_TranslationResolution(t *testing.T) {
 		{
 			// A transport class the database does not store: no input format,
 			// so there is not even a pair to look up.
-			name: "4010_837p / a transport the database does not know",
+			name:         "4010_837p / a transport the database does not know",
 			renderPlugin: liveXslt, renderOption: "4010_837p",
 			transportPlugin: liveNoSuchTransport,
 			wantPlugin:      "", wantGoPlugin: "", wantSource: "",

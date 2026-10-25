@@ -132,7 +132,7 @@ func TestRegistry_UnknownNameReturnsErrorAndNilPlugin(t *testing.T) {
 		" x12xml", // no trimming
 		"x12xml ",
 		JavaPluginPrefix,
-		JavaPluginPrefix + "X12XmlTransport", // a plausible typo, still an error
+		JavaPluginPrefix + "X12XmlTransport",  // a plausible typo, still an error
 		"org.remitt.plugin.render.XsltPlugin", // another package's FQCN
 	} {
 		t.Run("name="+name, func(t *testing.T) {

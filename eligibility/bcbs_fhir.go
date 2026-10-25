@@ -15,8 +15,8 @@ import (
 
 // Plugin identifiers for BCBSFhirEligibility.
 const (
-	BCBSFhirEligibilityClass   = "org.remitt.plugin.eligibility.BCBSFhirEligibility"
-	BCBSFhirEligibilityVersion = "0.1"
+	BCBSFhirEligibilityClass    = "org.remitt.plugin.eligibility.BCBSFhirEligibility"
+	BCBSFhirEligibilityVersion  = "0.1"
 	BCBSFhirEligibilityConfigNS = "eligibility_bcbs_fhir"
 )
 
