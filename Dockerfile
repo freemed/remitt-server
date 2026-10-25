@@ -2,7 +2,14 @@
 #   docker build -t remitt-server .        # from the remitt-server repo root
 
 # Stage 1: Build the Go binary
-FROM golang:1.26-alpine AS builder
+#
+# The builder tag pins the Go patch release, and it must: the official golang
+# images set GOTOOLCHAIN=local, so the `toolchain go1.26.10` line in go.mod is
+# inert in here and `golang:1.26-alpine` would silently build with whatever
+# patch release it happened to be (1.26.8 at the time of writing, which carries
+# the net/http and crypto/tls advisories fixed in 1.26.9/1.26.10). Bump this
+# tag together with the toolchain line in go.mod/go.work.
+FROM golang:1.26.10-alpine AS builder
 
 RUN apk add --no-cache git ca-certificates
 
