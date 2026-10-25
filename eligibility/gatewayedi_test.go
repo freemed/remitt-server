@@ -13,16 +13,9 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/ProtonMail/go-crypto/openpgp"
+	"github.com/ProtonMail/go-crypto/openpgp/armor"
 	"github.com/freemed/remitt-server/crypto"
-	"golang.org/x/crypto/openpgp"
-	"golang.org/x/crypto/openpgp/armor"
-
-	// golang.org/x/crypto/openpgp falls back to RIPEMD160 (the last entry of
-	// its candidate list) when a recipient key carries no preferred-hash
-	// subpacket, and the hash must be linked into the binary for
-	// openpgp.Encrypt to succeed. Linking it here keeps these fixtures on the
-	// same crypto.EncryptPGP / crypto.DecryptPGP path the plugin uses.
-	_ "golang.org/x/crypto/ripemd160"
 )
 
 // TestGatewayEDIRegistration verifies that the GatewayEDIEligibility plugin

@@ -7,18 +7,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
-	"golang.org/x/crypto/openpgp"
-	"golang.org/x/crypto/openpgp/armor"
-	"golang.org/x/crypto/openpgp/packet"
-
-	// golang.org/x/crypto/openpgp falls back to RIPEMD160 (the last entry of
-	// its candidate-hash list, see write.go candidateHashes/defaultHashes)
-	// whenever a recipient key carries no preferred-hash subpacket, and that
-	// hash is no longer linked into the binary by default. Without this blank
-	// import EncryptPGP fails with "cannot encrypt because no candidate hash
-	// functions are compiled in. (Wanted RIPEMD160 in this case.)".
-	_ "golang.org/x/crypto/ripemd160"
+	"github.com/ProtonMail/go-crypto/openpgp"
+	"github.com/ProtonMail/go-crypto/openpgp/armor"
+	"github.com/ProtonMail/go-crypto/openpgp/packet"
 )
 
 // pgpTestEnvelope is the real on-the-wire shape this package carries in
@@ -55,32 +48,28 @@ var pgpTestHighBytes = func() []byte {
 type pgpTestKeyPair struct {
 	public  []byte
 	private []byte
+	entity  *openpgp.Entity
 }
 
 // pgpTestGenerateKeyPair builds an in-memory, never-persisted RSA key pair and
 // returns it ASCII-armored, exactly as EncryptPGP/DecryptPGP expect.
 //
-// When preferSHA256 is true the entity is created with a packet.Config naming
-// crypto.SHA256 as the default hash. Note the x/crypto quirk this pins: the
-// PreferredHash subpacket is attached to the identity *after* it is signed, so
-// it reaches the hashed-subpacket area only when the identity is re-signed —
-// i.e. only in the private block (SerializePrivate calls SignUserId again).
-// The public block produced by Entity.Serialize always comes back without a
-// PreferredHash subpacket, which is why encryption against it lands on
-// openpgp's RIPEMD160 fallback (see the blank import above).
+// The entity is created with an explicit packet.Config (2048-bit RSA,
+// crypto.SHA256, AES-256) so the fixtures are cheap and deterministic.
 //
-// When preferSHA256 is false a nil config is used, so neither block carries a
-// preferred-hash subpacket and both shapes take the fallback path.
-func pgpTestGenerateKeyPair(t *testing.T, name string, preferSHA256 bool) pgpTestKeyPair {
+// ProtonMail/go-crypto differs from golang.org/x/crypto/openpgp here, and the
+// difference matters to the tests: PreferredHash is attached to the identity
+// before it is signed, so BOTH serialized blocks carry PreferredHash=[8]
+// (SHA-256). x/crypto dropped it from the public block, which is what used to
+// force its RIPEMD160 fallback (and the blank ripemd160 import this suite
+// needed). SerializePrivate re-signs the identity, so the private block agrees.
+func pgpTestGenerateKeyPair(t *testing.T, name string) pgpTestKeyPair {
 	t.Helper()
 
-	var config *packet.Config
-	if preferSHA256 {
-		config = &packet.Config{
-			RSABits:       2048,
-			DefaultHash:   gocrypto.SHA256,
-			DefaultCipher: packet.CipherAES256,
-		}
+	config := &packet.Config{
+		RSABits:       2048,
+		DefaultHash:   gocrypto.SHA256,
+		DefaultCipher: packet.CipherAES256,
 	}
 
 	entity, err := openpgp.NewEntity(name, "", strings.ToLower(name)+"@remitt-test.invalid", config)
@@ -112,7 +101,61 @@ func pgpTestGenerateKeyPair(t *testing.T, name string, preferSHA256 bool) pgpTes
 		t.Fatalf("close private armor writer: %v", err)
 	}
 
-	return pgpTestKeyPair{public: pubBuf.Bytes(), private: privBuf.Bytes()}
+	return pgpTestKeyPair{public: pubBuf.Bytes(), private: privBuf.Bytes(), entity: entity}
+}
+
+// pgpTestPublicKeyWithPreferredHashes re-signs every identity self-signature of
+// key with the given preferred-hash list and returns the re-armored public
+// block. hashes == nil produces a key with NO PreferredHash subpacket at all,
+// which is the shape of the older partner keys this server exchanges with: the
+// subpacket is optional and older tooling often omits it.
+//
+// It re-signs instead of editing the parsed signature because openpgp builds a
+// signature's subpacket area once, at signing time (packet.Signature.
+// outSubpackets), and Serialize writes that cached area — mutating
+// sig.PreferredHash afterwards changes nothing in the bytes.
+//
+// The public key is the recipient side only; the private block is untouched, so
+// the pair still decrypts what is encrypted to this block.
+func pgpTestPublicKeyWithPreferredHashes(t *testing.T, key pgpTestKeyPair, hashes []uint8) []byte {
+	t.Helper()
+
+	entity := key.entity
+	if len(entity.Identities) == 0 {
+		t.Fatal("generated entity has no identities to re-sign")
+	}
+
+	for _, identity := range entity.Identities {
+		primary := true
+		sig := &packet.Signature{
+			Version:       entity.PrimaryKey.Version,
+			SigType:       packet.SigTypePositiveCert,
+			PubKeyAlgo:    entity.PrimaryKey.PubKeyAlgo,
+			Hash:          gocrypto.SHA256,
+			CreationTime:  time.Now(),
+			IssuerKeyId:   &entity.PrimaryKey.KeyId,
+			IsPrimaryId:   &primary,
+			PreferredHash: hashes,
+		}
+		if err := sig.SignUserId(identity.UserId.Id, entity.PrimaryKey, entity.PrivateKey, nil); err != nil {
+			t.Fatalf("re-sign identity %q: %v", identity.UserId.Id, err)
+		}
+		identity.SelfSignature = sig
+		identity.Signatures = []*packet.Signature{sig}
+	}
+
+	var buf bytes.Buffer
+	writer, err := armor.Encode(&buf, openpgp.PublicKeyType, nil)
+	if err != nil {
+		t.Fatalf("armor.Encode(re-signed public): %v", err)
+	}
+	if err := entity.Serialize(writer); err != nil {
+		t.Fatalf("entity.Serialize(re-signed public): %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close re-signed public armor writer: %v", err)
+	}
+	return buf.Bytes()
 }
 
 // pgpTestPreferredHashes re-reads an armored public key and returns the
@@ -179,23 +222,20 @@ func pgpTestMustEncrypt(t *testing.T, plain, publicKey []byte) []byte {
 }
 
 func TestEncryptPGPDecryptPGPRoundTrip(t *testing.T) {
-	key := pgpTestGenerateKeyPair(t, "round-trip", true)
+	key := pgpTestGenerateKeyPair(t, "round-trip")
 
 	t.Run("keyringShapes", func(t *testing.T) {
-		// Pinned x/crypto facts this suite depends on:
-		//  - the serialized public block carries no PreferredHash subpacket,
-		//    so encrypting to it uses the RIPEMD160 fallback (needs the blank
-		//    import above, and is exactly what production does today);
-		//  - the private block does carry PreferredHash=[8] (SHA-256) because
-		//    SerializePrivate re-signs the identity.
-		if hashes := pgpTestPreferredHashes(t, key.public); len(hashes) != 0 {
-			t.Errorf("public key PreferredHash = %v; want none (x/crypto drops it on Serialize)", hashes)
+		// Pinned facts this suite depends on:
+		//  - ProtonMail/go-crypto attaches PreferredHash before signing, so the
+		//    public block carries [8] (SHA-256) — unlike x/crypto, which
+		//    dropped it and fell back to RIPEMD160;
+		//  - SerializePrivate re-signs the identity, so the private block
+		//    carries the same list.
+		if hashes := pgpTestPreferredHashes(t, key.public); len(hashes) != 1 || hashes[0] != 8 {
+			t.Errorf("public key PreferredHash = %v; want [8] (SHA-256)", hashes)
 		}
 		if hashes := pgpTestPreferredHashes(t, key.private); len(hashes) != 1 || hashes[0] != 8 {
 			t.Errorf("private key PreferredHash = %v; want [8] (SHA-256)", hashes)
-		}
-		if !gocrypto.RIPEMD160.Available() {
-			t.Fatal("RIPEMD160 is not linked; the no-preferred-hash fallback path cannot be exercised")
 		}
 	})
 
@@ -304,7 +344,7 @@ func TestEncryptPGPDecryptPGPRoundTrip(t *testing.T) {
 //     for armor preceded by non-whitespace text — even though DecryptPGP can
 //     still decrypt that same input.
 func TestIsPGPEncrypted(t *testing.T) {
-	key := pgpTestGenerateKeyPair(t, "detection", true)
+	key := pgpTestGenerateKeyPair(t, "detection")
 	binaryCiphertext := pgpTestMustEncrypt(t, []byte(pgpTestEnvelope), key.public)
 	armoredCiphertext := pgpTestArmorMessage(t, binaryCiphertext)
 
@@ -393,8 +433,8 @@ func TestIsPGPEncrypted(t *testing.T) {
 }
 
 func TestDecryptPGPErrors(t *testing.T) {
-	key := pgpTestGenerateKeyPair(t, "decrypt-errors", true)
-	otherKey := pgpTestGenerateKeyPair(t, "decrypt-errors-other", true)
+	key := pgpTestGenerateKeyPair(t, "decrypt-errors")
+	otherKey := pgpTestGenerateKeyPair(t, "decrypt-errors-other")
 	ciphertext := pgpTestMustEncrypt(t, []byte(pgpTestEnvelope), key.public)
 
 	tamperedTail := append([]byte{}, ciphertext...)
@@ -476,7 +516,7 @@ func TestDecryptPGPErrors(t *testing.T) {
 }
 
 func TestEncryptPGPErrors(t *testing.T) {
-	key := pgpTestGenerateKeyPair(t, "encrypt-errors", true)
+	key := pgpTestGenerateKeyPair(t, "encrypt-errors")
 
 	badKeys := map[string][]byte{
 		"emptyPublicKey":      {},
@@ -529,8 +569,8 @@ func TestEncryptPGPErrors(t *testing.T) {
 }
 
 func TestPGPSecondRecipientKeyCannotDecrypt(t *testing.T) {
-	keyA := pgpTestGenerateKeyPair(t, "recipient-a", true)
-	keyB := pgpTestGenerateKeyPair(t, "recipient-b", true)
+	keyA := pgpTestGenerateKeyPair(t, "recipient-a")
+	keyB := pgpTestGenerateKeyPair(t, "recipient-b")
 
 	payload := []byte("encrypted for recipient A only")
 	ciphertext := pgpTestMustEncrypt(t, payload, keyA.public)
@@ -577,26 +617,28 @@ func TestPGPSecondRecipientKeyCannotDecrypt(t *testing.T) {
 	})
 }
 
-// TestPGPKeyWithoutPreferredHash exercises the RIPEMD160 fallback path taken
-// when a recipient key has no preferred-hash subpacket (see the blank import at
-// the top of this file for why it is required). A key created without an
-// explicit default hash carries no preferred-hash subpacket in either block.
+// TestPGPKeyWithoutPreferredHash covers a recipient key that carries no
+// PreferredHash subpacket, which is the shape of the older keys this server
+// exchanges with trading partners: the subpacket is optional and older tooling
+// often omits it.
+//
+// openpgp.Encrypt intersects its own candidate-hash list with the recipient's
+// preference list, so an empty list used to send x/crypto to the last entry of
+// its list — RIPEMD160 — which required linking that hash into the binary (the
+// blank import this suite used to carry, and the cause of the "cannot encrypt
+// because no candidate hash functions are compiled in" failure in production).
+// ProtonMail/go-crypto's candidate list stops at SHA-512/SHA-3 and its empty
+// intersection fallback is SHA-256, so no extra hash needs linking.
 func TestPGPKeyWithoutPreferredHash(t *testing.T) {
-	key := pgpTestGenerateKeyPair(t, "no-preferred-hash", false)
-	for _, tc := range []struct {
-		name string
-		blob []byte
-	}{
-		{"public", key.public},
-		{"private", key.private},
-	} {
-		if hashes := pgpTestPreferredHashes(t, tc.blob); len(hashes) != 0 {
-			t.Fatalf("%s key has preferred hashes %v; want none for the fallback path", tc.name, hashes)
-		}
+	key := pgpTestGenerateKeyPair(t, "no-preferred-hash")
+	recipient := pgpTestPublicKeyWithPreferredHashes(t, key, nil)
+
+	if hashes := pgpTestPreferredHashes(t, recipient); len(hashes) != 0 {
+		t.Fatalf("re-signed recipient key has preferred hashes %v; want none so the fallback is exercised", hashes)
 	}
 
 	payload := []byte(pgpTestEnvelope)
-	ciphertext := pgpTestMustEncrypt(t, payload, key.public)
+	ciphertext := pgpTestMustEncrypt(t, payload, recipient)
 
 	plaintext, err := DecryptPGP(ciphertext, key.private)
 	if err != nil {

@@ -15,6 +15,7 @@ replace (
 )
 
 require (
+	github.com/ProtonMail/go-crypto v1.5.2
 	github.com/freemed/remitt-server/api v0.0.0-20260811020147-71c029df58dc
 	github.com/freemed/remitt-server/common v0.0.0-20260811020147-71c029df58dc
 	github.com/freemed/remitt-server/config v0.0.0-20260811020147-71c029df58dc
@@ -37,6 +38,7 @@ require (
 	github.com/andybalholm/cascadia v1.3.5 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/cloudflare/circl v1.6.3 // indirect
 	github.com/freemed/gokogiri/xml v0.0.0-20260915172826-7894ad67f15c // indirect
 	github.com/freemed/gokogiri/xpath v0.0.0-20260915172826-7894ad67f15c // indirect
 	github.com/freemed/ratago/xslt v0.0.0-20260915205955-ad59da3cc45f // indirect

@@ -8,9 +8,9 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/ProtonMail/go-crypto/openpgp/packet"
 	"github.com/freemed/remitt-server/crypto"
 	"github.com/freemed/remitt-server/model"
-	"golang.org/x/crypto/openpgp/packet"
 )
 
 const GatewayEdiScooperClass = "org.remitt.plugin.scooper.GatewayEdiSftpScooper"

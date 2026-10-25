@@ -1,3 +1,14 @@
+// Package crypto wraps OpenPGP for the EDI payloads this server exchanges with
+// trading partners (see eligibility/ and scooper/).
+//
+// The implementation is github.com/ProtonMail/go-crypto rather than
+// golang.org/x/crypto/openpgp: x/crypto's copy is frozen and flagged as unsafe
+// by design (GO-2026-5932, "unmaintained, unsafe by design, and has known
+// security issues") with no upstream fix. The fork is API-compatible, so the
+// calls here are unchanged; the behaviour that does change is the hash used for
+// a recipient key carrying no preferred-hash subpacket — SHA-256 instead of
+// x/crypto's RIPEMD160 fallback, which also removes the need to link RIPEMD160
+// into the binary for those keys.
 package crypto
 
 import (
@@ -6,8 +17,8 @@ import (
 	"io"
 	"strings"
 
-	"golang.org/x/crypto/openpgp"
-	"golang.org/x/crypto/openpgp/armor"
+	"github.com/ProtonMail/go-crypto/openpgp"
+	"github.com/ProtonMail/go-crypto/openpgp/armor"
 )
 
 // DecryptPGP decrypts a PGP-encrypted message using the provided private key.
