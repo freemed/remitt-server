@@ -129,10 +129,12 @@ var (
 //   - journals the tProcessor row (InsertProcessor) and keeps its id on the
 //     item, so the same payload cannot be polled twice and the storefile
 //     transports can satisfy tFileStore's foreign keys;
-//   - sends a COPY on jobQueueChannel, which is what a worker receives. The
-//     worker looks the item up by ID in jobQueue and takes its lock with no nil
-//     check, so the copy and the map entry must agree - they carry the same
-//     PayloadID, the same ProcessorID and the same lock pointer.
+//   - sends the item on jobQueueChannel. The channel carries a *JobQueueItem,
+//     not a copy: the item owns a lock and is mutated through it (Status,
+//     Started, Log), and go vet's copylocks check is right to reject copying
+//     such a type — the copy shares the lock pointer but not the fields, so a
+//     status written through one copy would never reach the other. The worker
+//     looks the item up by ID in jobQueue and processes that entry.
 //
 // The job identity is attached to the work context by attachJobIdentity, from
 // the ids the item carries.
@@ -184,7 +186,7 @@ func enqueueRow(ctx context.Context, row dbgen.Tpayload) (int64, error) {
 
 	// Registered first, then sent: the worker dereferences what it looks up.
 	// The send publishes the item (and its identity) to the dispatcher.
-	jobQueueChannel <- *item
+	jobQueueChannel <- item
 
 	log.Printf("jobqueue: enqueued payload %d as job %d (tProcessor id %d, plugin %s)",
 		row.ID, jobID, processorID, row.Renderplugin)

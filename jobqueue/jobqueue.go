@@ -39,8 +39,8 @@ var (
 		JobStatusCancel:  "CANCEL",
 	}
 
-	jobQueueChannel = make(chan JobQueueItem, 100)
-	WorkerQueue     chan chan JobQueueItem
+	jobQueueChannel = make(chan *JobQueueItem, 100)
+	WorkerQueue     chan chan *JobQueueItem
 )
 
 func init() {
@@ -207,11 +207,11 @@ func (o *JobQueueItem) Render() (out []byte, err error) {
 // NewWorker creates, and returns a new Worker object. Its only argument
 // is a channel that the worker can add itself to whenever it is done its
 // work.
-func NewWorker(id int, workerQueue chan chan JobQueueItem) Worker {
+func NewWorker(id int, workerQueue chan chan *JobQueueItem) Worker {
 	// Create, and return the worker.
 	worker := Worker{
 		ID:          id,
-		Work:        make(chan JobQueueItem),
+		Work:        make(chan *JobQueueItem),
 		WorkerQueue: workerQueue,
 		QuitChan:    make(chan bool)}
 
@@ -221,8 +221,8 @@ func NewWorker(id int, workerQueue chan chan JobQueueItem) Worker {
 // Worker represents the individual job worker status
 type Worker struct {
 	ID          int
-	Work        chan JobQueueItem
-	WorkerQueue chan chan JobQueueItem
+	Work        chan *JobQueueItem
+	WorkerQueue chan chan *JobQueueItem
 	QuitChan    chan bool
 }
 
@@ -301,7 +301,7 @@ func StartDispatcher(nworkers int) {
 	nworkers = usableWorkerCount(nworkers)
 
 	// First, initialize the channel we are going to but the workers' work channels into.
-	WorkerQueue = make(chan chan JobQueueItem, nworkers)
+	WorkerQueue = make(chan chan *JobQueueItem, nworkers)
 
 	// Now, create all of our workers.
 	for i := 0; i < nworkers; i++ {

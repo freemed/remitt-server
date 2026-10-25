@@ -15,7 +15,7 @@ import (
 // This file tests the ONE enqueue function both triggers converge on
 // (EnqueuePayload, enqueue.go) with no database at all: the database seams are
 // package variables and are replaced with stubs here. That is deliberate - the
-// queue's own contract (registration, the copy on the channel, the identity the
+// queue's own contract (registration, the item on the channel, the identity the
 // transports need, the in-flight skip, and the rollback when journaling fails)
 // is what the missing trigger got wrong, and it must be testable without MySQL.
 //
@@ -145,9 +145,8 @@ func queuedCount() int {
 
 // TestEnqueuePayloadRegistersDispatchesAndAttachesIdentity is the test the
 // missing trigger needed: one call must build the item with a usable lock,
-// register it in jobQueue, send a COPY on jobQueueChannel that agrees with the
-// map entry, journal the tProcessor row, and carry the database identity the
-// storefile transports need.
+// register it in jobQueue, send that same item on jobQueueChannel, journal the
+// tProcessor row, and carry the database identity the storefile transports need.
 func TestEnqueuePayloadRegistersDispatchesAndAttachesIdentity(t *testing.T) {
 	resetQueue(t)
 	stubs := (&queueStubs{
@@ -193,18 +192,22 @@ func TestEnqueuePayloadRegistersDispatchesAndAttachesIdentity(t *testing.T) {
 		item.AppendLog("enqueued")
 	}()
 
-	// 3. A COPY went on the channel, and it agrees with the map entry.
+	// 3. The channel carried the registered item itself (a *JobQueueItem, not a
+	// copy), which is what the dispatcher hands to a worker.
 	select {
-	case copy := <-jobQueueChannel:
-		if copy.ID != item.ID {
-			t.Errorf("channel copy ID = %d; want the registered job %d", copy.ID, item.ID)
+	case got := <-jobQueueChannel:
+		if got != item {
+			t.Errorf("channel carried %p; want the registered item %p (the channel must not copy a locked item)", got, item)
 		}
-		if copy.PayloadID != 42 || copy.ProcessorID != 7700 {
-			t.Errorf("channel copy identity = (payload %d, processor %d); want (42, 7700) to match the map entry",
-				copy.PayloadID, copy.ProcessorID)
+		if got.ID != item.ID {
+			t.Errorf("channel item ID = %d; want the registered job %d", got.ID, item.ID)
 		}
-		if copy.User != item.User {
-			t.Errorf("channel copy user = %q; want %q", copy.User, item.User)
+		if got.PayloadID != 42 || got.ProcessorID != 7700 {
+			t.Errorf("channel item identity = (payload %d, processor %d); want (42, 7700) to match the map entry",
+				got.PayloadID, got.ProcessorID)
+		}
+		if got.User != item.User {
+			t.Errorf("channel item user = %q; want %q", got.User, item.User)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("nothing arrived on jobQueueChannel: the dispatcher would never see the job")
@@ -285,16 +288,16 @@ func TestEnqueuePayloadSkipsPayloadAlreadyInFlight(t *testing.T) {
 
 	// Exactly one item on the channel: the skip did not dispatch anything.
 	select {
-	case copy := <-jobQueueChannel:
-		if copy.ID != first {
-			t.Errorf("channel carried job %d; want only the first job %d", copy.ID, first)
+	case got := <-jobQueueChannel:
+		if got.ID != first {
+			t.Errorf("channel carried job %d; want only the first job %d", got.ID, first)
 		}
 	default:
 		t.Error("the first enqueue left nothing on jobQueueChannel")
 	}
 	select {
-	case copy := <-jobQueueChannel:
-		t.Errorf("a second copy (job %d) reached the channel: the in-flight payload was dispatched twice", copy.ID)
+	case got := <-jobQueueChannel:
+		t.Errorf("a second item (job %d) reached the channel: the in-flight payload was dispatched twice", got.ID)
 	default:
 	}
 }
@@ -342,8 +345,8 @@ func TestEnqueuePayloadJournalFailureUndoesTheRegistration(t *testing.T) {
 		t.Errorf("jobQueue holds %d items after a failed journal; want 0 so the payload can be polled again", n)
 	}
 	select {
-	case copy := <-jobQueueChannel:
-		t.Errorf("job %d reached the channel although its journal failed", copy.ID)
+	case got := <-jobQueueChannel:
+		t.Errorf("job %d reached the channel although its journal failed", got.ID)
 	default:
 	}
 }
